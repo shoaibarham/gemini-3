@@ -1,16 +1,276 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { 
+  insertSessionSchema, 
+  insertReadingProgressSchema,
+  insertMathProgressSchema,
+  insertVibeStateSchema
+} from "@shared/schema";
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  // put application routes here
-  // prefix all routes with /api
+  
+  app.get("/api/user/:id", async (req, res) => {
+    try {
+      const user = await storage.getUser(req.params.id);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      const { password, ...safeUser } = user;
+      res.json(safeUser);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch user" });
+    }
+  });
 
-  // use storage to perform CRUD operations on the storage interface
-  // e.g. storage.insertUser(user) or storage.getUserByUsername(username)
+  app.get("/api/user/username/:username", async (req, res) => {
+    try {
+      const user = await storage.getUserByUsername(req.params.username);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      const { password, ...safeUser } = user;
+      res.json(safeUser);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch user" });
+    }
+  });
+
+  app.get("/api/sessions/:userId", async (req, res) => {
+    try {
+      const sessions = await storage.getSessions(req.params.userId);
+      res.json(sessions);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch sessions" });
+    }
+  });
+
+  app.post("/api/sessions", async (req, res) => {
+    try {
+      const parsed = insertSessionSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.issues });
+      }
+      const session = await storage.createSession(parsed.data);
+      res.status(201).json(session);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to create session" });
+    }
+  });
+
+  app.patch("/api/sessions/:id", async (req, res) => {
+    try {
+      const session = await storage.updateSession(req.params.id, req.body);
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+      res.json(session);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update session" });
+    }
+  });
+
+  app.get("/api/reading-progress/:userId", async (req, res) => {
+    try {
+      const progress = await storage.getReadingProgress(req.params.userId);
+      res.json(progress);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch reading progress" });
+    }
+  });
+
+  app.post("/api/reading-progress", async (req, res) => {
+    try {
+      const parsed = insertReadingProgressSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.issues });
+      }
+      const progress = await storage.createReadingProgress(parsed.data);
+      res.status(201).json(progress);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to create reading progress" });
+    }
+  });
+
+  app.patch("/api/reading-progress/:id", async (req, res) => {
+    try {
+      const progress = await storage.updateReadingProgress(req.params.id, req.body);
+      if (!progress) {
+        return res.status(404).json({ error: "Reading progress not found" });
+      }
+      res.json(progress);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update reading progress" });
+    }
+  });
+
+  app.get("/api/math-progress/:userId", async (req, res) => {
+    try {
+      const progress = await storage.getMathProgress(req.params.userId);
+      res.json(progress);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch math progress" });
+    }
+  });
+
+  app.post("/api/math-progress", async (req, res) => {
+    try {
+      const parsed = insertMathProgressSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.issues });
+      }
+      const progress = await storage.createMathProgress(parsed.data);
+      res.status(201).json(progress);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to create math progress" });
+    }
+  });
+
+  app.patch("/api/math-progress/:id", async (req, res) => {
+    try {
+      const progress = await storage.updateMathProgress(req.params.id, req.body);
+      if (!progress) {
+        return res.status(404).json({ error: "Math progress not found" });
+      }
+      res.json(progress);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update math progress" });
+    }
+  });
+
+  app.get("/api/vibe-states/:userId", async (req, res) => {
+    try {
+      const states = await storage.getVibeStates(req.params.userId);
+      res.json(states);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch vibe states" });
+    }
+  });
+
+  app.get("/api/vibe-states/session/:sessionId", async (req, res) => {
+    try {
+      const states = await storage.getVibeStatesBySession(req.params.sessionId);
+      res.json(states);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch vibe states" });
+    }
+  });
+
+  app.post("/api/vibe-states", async (req, res) => {
+    try {
+      const parsed = insertVibeStateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.issues });
+      }
+      const state = await storage.createVibeState(parsed.data);
+      res.status(201).json(state);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to create vibe state" });
+    }
+  });
+
+  app.get("/api/stories", async (req, res) => {
+    try {
+      const stories = await storage.getStories();
+      res.json(stories);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch stories" });
+    }
+  });
+
+  app.get("/api/stories/:id", async (req, res) => {
+    try {
+      const story = await storage.getStory(req.params.id);
+      if (!story) {
+        return res.status(404).json({ error: "Story not found" });
+      }
+      res.json(story);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch story" });
+    }
+  });
+
+  app.get("/api/dashboard/:userId", async (req, res) => {
+    try {
+      const user = await storage.getUser(req.params.userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const stats = await storage.getDashboardStats(req.params.userId);
+      const sessions = await storage.getSessions(req.params.userId);
+      const vibeStates = await storage.getVibeStates(req.params.userId);
+      const readingProgress = await storage.getReadingProgress(req.params.userId);
+      const mathProgress = await storage.getMathProgress(req.params.userId);
+
+      const { password, ...safeUser } = user;
+
+      res.json({
+        user: safeUser,
+        stats,
+        recentSessions: sessions.slice(0, 10),
+        recentVibes: vibeStates.slice(0, 10),
+        readingProgress: readingProgress.slice(0, 5),
+        mathProgress: mathProgress.slice(0, 5),
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch dashboard data" });
+    }
+  });
+
+  app.get("/api/child-dashboard/:userId", async (req, res) => {
+    try {
+      const user = await storage.getUser(req.params.userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const stats = await storage.getDashboardStats(req.params.userId);
+      const sessions = await storage.getSessions(req.params.userId);
+      
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+
+      const todaySessions = sessions.filter(s => {
+        const sessionDate = new Date(s.startTime);
+        return sessionDate >= today && sessionDate < tomorrow;
+      });
+
+      const todayReadingTime = todaySessions
+        .filter(s => s.type === "reading")
+        .reduce((acc, s) => acc + (s.duration || 0), 0);
+
+      const mathProgress = await storage.getMathProgress(req.params.userId);
+      const todayMathProblems = mathProgress.length > 0 
+        ? mathProgress[mathProgress.length - 1].problemsAttempted || 0
+        : 0;
+
+      const { password, ...safeUser } = user;
+
+      res.json({
+        user: safeUser,
+        todayGoals: {
+          readingMinutes: Math.min(todayReadingTime, 20),
+          targetReadingMinutes: 20,
+          mathProblems: Math.min(todayMathProblems, 10),
+          targetMathProblems: 10,
+        },
+        currentStreak: stats.currentStreak,
+        recentAchievements: [
+          "Read for 5 days in a row!",
+          "Solved 50 math problems!",
+          "Perfect accuracy streak!",
+        ],
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch child dashboard data" });
+    }
+  });
 
   return httpServer;
 }
