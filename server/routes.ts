@@ -5,8 +5,10 @@ import {
   insertSessionSchema, 
   insertReadingProgressSchema,
   insertMathProgressSchema,
-  insertVibeStateSchema
+  insertVibeStateSchema,
+  insertChatMessageSchema
 } from "@shared/schema";
+import { generateChatResponse } from "./gemini";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -218,6 +220,75 @@ export async function registerRoutes(
       });
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch dashboard data" });
+    }
+  });
+
+  app.get("/api/chat/:userId/:storyId", async (req, res) => {
+    try {
+      const messages = await storage.getChatMessages(req.params.userId, req.params.storyId);
+      res.json(messages);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch chat messages" });
+    }
+  });
+
+  app.post("/api/chat", async (req, res) => {
+    try {
+      const { userId, storyId, message, currentPosition } = req.body;
+      
+      if (!userId || !storyId || !message) {
+        return res.status(400).json({ error: "Missing required fields" });
+      }
+
+      const story = await storage.getStory(storyId);
+      if (!story) {
+        return res.status(404).json({ error: "Story not found" });
+      }
+
+      const userMessageData = {
+        userId,
+        storyId,
+        role: "user",
+        content: message,
+      };
+      const userMsg = await storage.createChatMessage(userMessageData);
+
+      const history = await storage.getChatMessages(userId, storyId);
+
+      const aiResponse = await generateChatResponse(
+        message,
+        {
+          storyTitle: story.title,
+          storyContent: story.content,
+          currentPosition,
+        },
+        history.map(m => ({ role: m.role, content: m.content }))
+      );
+
+      const assistantMessageData = {
+        userId,
+        storyId,
+        role: "assistant",
+        content: aiResponse,
+      };
+      const assistantMsg = await storage.createChatMessage(assistantMessageData);
+
+      res.status(201).json({
+        userMessage: userMsg,
+        assistantMessage: assistantMsg,
+      });
+    } catch (error) {
+      console.error("Chat error:", error);
+      res.status(500).json({ error: "Failed to process chat message" });
+    }
+  });
+
+  app.delete("/api/chat/:userId/:storyId", async (req, res) => {
+    try {
+      await storage.clearChatMessages(req.params.userId, req.params.storyId);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to clear chat messages" });
     }
   });
 

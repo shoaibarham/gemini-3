@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
-import { motion } from "framer-motion";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { motion, AnimatePresence } from "framer-motion";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { 
   Play, 
   Pause,
@@ -11,24 +11,32 @@ import {
   ChevronLeft,
   BookOpen,
   Clock,
-  Loader2
+  Loader2,
+  MessageCircle,
+  Send,
+  X,
+  Trash2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { VibeMonitor } from "@/components/vibe-monitor";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { apiRequest } from "@/lib/queryClient";
-import type { VibeStateType, Story } from "@shared/schema";
+import type { VibeStateType, Story, ChatMessage } from "@shared/schema";
 
 export default function Reading() {
+  const queryClient = useQueryClient();
+  
   const { data: stories, isLoading } = useQuery<Story[]>({
     queryKey: ["/api/stories"],
   });
 
   const currentStory = stories?.[0] || {
-    id: "1",
+    id: "story-1",
     title: "The Brave Little Fox",
     content: `Once upon a time, in a green forest, there lived a little fox named Finn. 
     
@@ -63,11 +71,27 @@ The End.`,
     wordCount: 200,
   };
 
+  const storyId = currentStory.id;
+  const userId = "user-1";
+
+  const { data: chatMessages = [], refetch: refetchChat } = useQuery<ChatMessage[]>({
+    queryKey: ["/api/chat", userId, storyId],
+    queryFn: async () => {
+      const res = await fetch(`/api/chat/${userId}/${storyId}`);
+      if (!res.ok) throw new Error("Failed to fetch chat");
+      return res.json();
+    },
+    enabled: !!storyId,
+  });
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentWordIndex, setCurrentWordIndex] = useState(0);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [currentVibe, setCurrentVibe] = useState<VibeStateType>("focused");
   const [elapsedTime, setElapsedTime] = useState(0);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const chatScrollRef = useRef<HTMLDivElement>(null);
 
   const saveReadingProgress = useMutation({
     mutationFn: async (data: { wordsRead: number; currentPosition: number; completed: boolean }) => {
@@ -88,6 +112,34 @@ The End.`,
         state,
       });
       return response.json();
+    },
+  });
+
+  const sendChatMessage = useMutation({
+    mutationFn: async (message: string) => {
+      const response = await apiRequest("POST", "/api/chat", {
+        userId,
+        storyId,
+        message,
+        currentPosition: currentWordIndex,
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      refetchChat();
+      setChatInput("");
+    },
+  });
+
+  const clearChat = useMutation({
+    mutationFn: async () => {
+      const response = await fetch(`/api/chat/${userId}/${storyId}`, {
+        method: "DELETE",
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      refetchChat();
     },
   });
 
@@ -133,6 +185,12 @@ The End.`,
     }
   }, [progress, isPlaying]);
 
+  useEffect(() => {
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [chatMessages]);
+
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -157,6 +215,19 @@ The End.`,
 
   const skipForward = () => {
     setCurrentWordIndex(Math.min(totalWords, currentWordIndex + 10));
+  };
+
+  const handleSendMessage = () => {
+    if (chatInput.trim() && !sendChatMessage.isPending) {
+      sendChatMessage.mutate(chatInput.trim());
+    }
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
   };
 
   const renderWord = (word: string, index: number) => {
@@ -216,106 +287,216 @@ The End.`,
         </div>
       </header>
 
-      <main className="container mx-auto px-6 py-8 max-w-4xl">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="space-y-8"
-        >
-          <div className="text-center space-y-2">
-            <h1 className="font-child text-3xl font-bold" data-testid="text-story-title">{currentStory.title}</h1>
-            <p className="text-muted-foreground">Read along with the highlighted words</p>
-          </div>
+      <main className="container mx-auto px-6 py-8">
+        <div className="flex gap-6 max-w-6xl mx-auto">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className={`space-y-8 flex-1 ${isChatOpen ? "max-w-2xl" : "max-w-4xl mx-auto"}`}
+          >
+            <div className="text-center space-y-2">
+              <h1 className="font-child text-3xl font-bold" data-testid="text-story-title">{currentStory.title}</h1>
+              <p className="text-muted-foreground">Read along with the highlighted words</p>
+            </div>
 
-          <Card className="overflow-hidden">
-            <CardContent className="p-8">
-              <div className="mb-6">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm text-muted-foreground">Progress</span>
-                  <span className="text-sm font-medium" data-testid="text-word-progress">{currentWordIndex} / {totalWords} words</span>
+            <Card className="overflow-hidden">
+              <CardContent className="p-8">
+                <div className="mb-6">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm text-muted-foreground">Progress</span>
+                    <span className="text-sm font-medium" data-testid="text-word-progress">{currentWordIndex} / {totalWords} words</span>
+                  </div>
+                  <Progress value={progress} className="h-2" data-testid="progress-bar" />
                 </div>
-                <Progress value={progress} className="h-2" data-testid="progress-bar" />
-              </div>
 
-              <div 
-                className="font-child text-2xl leading-relaxed max-h-[50vh] overflow-y-auto p-4 rounded-xl bg-muted/30"
-                data-testid="text-story-content"
-              >
-                {words.map((word, index) => renderWord(word, index))}
-              </div>
-            </CardContent>
-          </Card>
+                <div 
+                  className="font-child text-2xl leading-relaxed max-h-[50vh] overflow-y-auto p-4 rounded-xl bg-muted/30"
+                  data-testid="text-story-content"
+                >
+                  {words.map((word, index) => renderWord(word, index))}
+                </div>
+              </CardContent>
+            </Card>
 
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex flex-col items-center gap-6">
-                <div className="flex items-center gap-4">
-                  <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    onClick={skipBack}
-                    disabled={currentWordIndex === 0}
-                    data-testid="button-skip-back"
-                  >
-                    <SkipBack className="h-5 w-5" />
-                  </Button>
-
-                  <motion.div whileTap={{ scale: 0.95 }}>
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex flex-col items-center gap-6">
+                  <div className="flex items-center gap-4">
                     <Button 
-                      size="lg" 
-                      className="h-16 w-16 rounded-full"
-                      onClick={togglePlay}
-                      data-testid="button-play-pause"
+                      variant="ghost" 
+                      size="icon" 
+                      onClick={skipBack}
+                      disabled={currentWordIndex === 0}
+                      data-testid="button-skip-back"
                     >
-                      {isPlaying ? (
-                        <Pause className="h-6 w-6" />
-                      ) : (
-                        <Play className="h-6 w-6 ml-1" />
-                      )}
+                      <SkipBack className="h-5 w-5" />
                     </Button>
-                  </motion.div>
 
-                  <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    onClick={skipForward}
-                    disabled={currentWordIndex >= totalWords}
-                    data-testid="button-skip-forward"
-                  >
-                    <SkipForward className="h-5 w-5" />
-                  </Button>
-                </div>
+                    <motion.div whileTap={{ scale: 0.95 }}>
+                      <Button 
+                        size="lg" 
+                        className="h-16 w-16 rounded-full"
+                        onClick={togglePlay}
+                        data-testid="button-play-pause"
+                      >
+                        {isPlaying ? (
+                          <Pause className="h-6 w-6" />
+                        ) : (
+                          <Play className="h-6 w-6 ml-1" />
+                        )}
+                      </Button>
+                    </motion.div>
 
-                <div className="flex items-center gap-4 w-full max-w-xs">
-                  <Volume2 className="h-4 w-4 text-muted-foreground" />
-                  <div className="flex-1">
-                    <label className="text-xs text-muted-foreground mb-1 block">
-                      Speed: {playbackSpeed}x
-                    </label>
-                    <Slider
-                      value={[playbackSpeed]}
-                      onValueChange={([value]) => setPlaybackSpeed(value)}
-                      min={0.5}
-                      max={2}
-                      step={0.25}
-                      className="w-full"
-                      data-testid="slider-speed"
-                    />
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      onClick={skipForward}
+                      disabled={currentWordIndex >= totalWords}
+                      data-testid="button-skip-forward"
+                    >
+                      <SkipForward className="h-5 w-5" />
+                    </Button>
+                  </div>
+
+                  <div className="flex items-center gap-4 w-full max-w-xs">
+                    <Volume2 className="h-4 w-4 text-muted-foreground" />
+                    <div className="flex-1">
+                      <label className="text-xs text-muted-foreground mb-1 block">
+                        Speed: {playbackSpeed}x
+                      </label>
+                      <Slider
+                        value={[playbackSpeed]}
+                        onValueChange={([value]) => setPlaybackSpeed(value)}
+                        min={0.5}
+                        max={2}
+                        step={0.25}
+                        className="w-full"
+                        data-testid="slider-speed"
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
 
-          <div className="flex justify-center pb-20">
-            <Link href="/child">
-              <Button variant="outline" className="gap-2" data-testid="button-back-dashboard">
-                <ChevronLeft className="h-4 w-4" />
-                Back to Dashboard
+            <div className="flex justify-center gap-4 pb-20">
+              <Link href="/child">
+                <Button variant="outline" className="gap-2" data-testid="button-back-dashboard">
+                  <ChevronLeft className="h-4 w-4" />
+                  Back to Dashboard
+                </Button>
+              </Link>
+              <Button
+                variant={isChatOpen ? "secondary" : "default"}
+                className="gap-2"
+                onClick={() => setIsChatOpen(!isChatOpen)}
+                data-testid="button-toggle-chat"
+              >
+                <MessageCircle className="h-4 w-4" />
+                {isChatOpen ? "Close Chat" : "Ask a Question"}
               </Button>
-            </Link>
-          </div>
-        </motion.div>
+            </div>
+          </motion.div>
+
+          <AnimatePresence>
+            {isChatOpen && (
+              <motion.div
+                initial={{ opacity: 0, x: 100, width: 0 }}
+                animate={{ opacity: 1, x: 0, width: "350px" }}
+                exit={{ opacity: 0, x: 100, width: 0 }}
+                className="shrink-0"
+              >
+                <Card className="h-[calc(100vh-200px)] sticky top-24 flex flex-col">
+                  <CardHeader className="flex flex-row items-center justify-between gap-2 py-3 px-4 border-b">
+                    <CardTitle className="text-base font-child flex items-center gap-2">
+                      <MessageCircle className="h-4 w-4 text-primary" />
+                      Reading Buddy
+                    </CardTitle>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => clearChat.mutate()}
+                        disabled={clearChat.isPending || chatMessages.length === 0}
+                        data-testid="button-clear-chat"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => setIsChatOpen(false)}
+                        data-testid="button-close-chat"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  
+                  <ScrollArea className="flex-1 p-4" ref={chatScrollRef}>
+                    <div className="space-y-4">
+                      {chatMessages.length === 0 && (
+                        <div className="text-center text-muted-foreground py-8">
+                          <MessageCircle className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                          <p className="font-child text-sm">Hi there! I'm your reading buddy.</p>
+                          <p className="text-xs mt-2">Ask me anything about the story!</p>
+                        </div>
+                      )}
+                      {chatMessages.map((msg) => (
+                        <div
+                          key={msg.id}
+                          className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                          data-testid={`chat-message-${msg.role}`}
+                        >
+                          <div
+                            className={`max-w-[85%] rounded-2xl px-4 py-2 ${
+                              msg.role === "user"
+                                ? "bg-primary text-primary-foreground"
+                                : "bg-muted"
+                            }`}
+                          >
+                            <p className="text-sm font-child">{msg.content}</p>
+                          </div>
+                        </div>
+                      ))}
+                      {sendChatMessage.isPending && (
+                        <div className="flex justify-start">
+                          <div className="bg-muted rounded-2xl px-4 py-2">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </ScrollArea>
+
+                  <div className="p-4 border-t">
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Ask about the story..."
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        onKeyPress={handleKeyPress}
+                        disabled={sendChatMessage.isPending}
+                        className="font-child"
+                        data-testid="input-chat"
+                      />
+                      <Button
+                        size="icon"
+                        onClick={handleSendMessage}
+                        disabled={!chatInput.trim() || sendChatMessage.isPending}
+                        data-testid="button-send-chat"
+                      >
+                        <Send className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </main>
 
       <VibeMonitor currentVibe={currentVibe} />

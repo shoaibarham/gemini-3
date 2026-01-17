@@ -58,12 +58,22 @@ export const stories = pgTable("stories", {
   wordCount: integer("word_count").default(0),
 });
 
+export const chatMessages = pgTable("chat_messages", {
+  id: varchar("id", { length: 36 }).primaryKey(),
+  userId: varchar("user_id", { length: 36 }).notNull(),
+  storyId: varchar("story_id", { length: 36 }).notNull(),
+  role: text("role").notNull(),
+  content: text("content").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const insertUserSchema = createInsertSchema(users).omit({ id: true });
 export const insertSessionSchema = createInsertSchema(sessions).omit({ id: true });
 export const insertReadingProgressSchema = createInsertSchema(readingProgress).omit({ id: true });
 export const insertMathProgressSchema = createInsertSchema(mathProgress).omit({ id: true });
 export const insertVibeStateSchema = createInsertSchema(vibeStates).omit({ id: true });
 export const insertStorySchema = createInsertSchema(stories).omit({ id: true });
+export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ id: true });
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
@@ -77,6 +87,8 @@ export type InsertVibeState = z.infer<typeof insertVibeStateSchema>;
 export type VibeState = typeof vibeStates.$inferSelect;
 export type InsertStory = z.infer<typeof insertStorySchema>;
 export type Story = typeof stories.$inferSelect;
+export type InsertChatMessage = z.infer<typeof insertChatMessageSchema>;
+export type ChatMessage = typeof chatMessages.$inferSelect;
 
 export type VibeStateType = "focused" | "happy" | "confused" | "frustrated" | "tired" | "neutral";
 

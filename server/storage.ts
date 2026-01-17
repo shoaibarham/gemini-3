@@ -4,7 +4,8 @@ import {
   type ReadingProgress, type InsertReadingProgress,
   type MathProgress, type InsertMathProgress,
   type VibeState, type InsertVibeState,
-  type Story, type InsertStory
+  type Story, type InsertStory,
+  type ChatMessage, type InsertChatMessage
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -36,6 +37,10 @@ export interface IStorage {
   getStory(id: string): Promise<Story | undefined>;
   createStory(story: InsertStory): Promise<Story>;
 
+  getChatMessages(userId: string, storyId: string): Promise<ChatMessage[]>;
+  createChatMessage(message: InsertChatMessage): Promise<ChatMessage>;
+  clearChatMessages(userId: string, storyId: string): Promise<void>;
+
   getDashboardStats(userId: string): Promise<{
     totalReadingTime: number;
     totalMathProblems: number;
@@ -52,6 +57,7 @@ export class MemStorage implements IStorage {
   private mathProgress: Map<string, MathProgress>;
   private vibeStates: Map<string, VibeState>;
   private stories: Map<string, Story>;
+  private chatMessages: Map<string, ChatMessage>;
 
   constructor() {
     this.users = new Map();
@@ -60,6 +66,7 @@ export class MemStorage implements IStorage {
     this.mathProgress = new Map();
     this.vibeStates = new Map();
     this.stories = new Map();
+    this.chatMessages = new Map();
 
     this.seedData();
   }
@@ -209,7 +216,12 @@ The End.`,
 
   async createUser(insertUser: InsertUser): Promise<User> {
     const id = randomUUID();
-    const user: User = { ...insertUser, id };
+    const user: User = { 
+      ...insertUser, 
+      id,
+      role: insertUser.role || "child",
+      avatarUrl: insertUser.avatarUrl || null,
+    };
     this.users.set(id, user);
     return user;
   }
@@ -260,6 +272,7 @@ The End.`,
     const newProgress: ReadingProgress = {
       ...progress,
       id,
+      sessionId: progress.sessionId || null,
       wordsRead: progress.wordsRead || 0,
       accuracy: progress.accuracy || 0,
       currentPosition: progress.currentPosition || 0,
@@ -292,6 +305,7 @@ The End.`,
     const newProgress: MathProgress = {
       ...progress,
       id,
+      sessionId: progress.sessionId || null,
       problemsAttempted: progress.problemsAttempted || 0,
       problemsCorrect: progress.problemsCorrect || 0,
       currentLevel: progress.currentLevel || 1,
@@ -326,6 +340,7 @@ The End.`,
     const newState: VibeState = {
       ...state,
       id,
+      sessionId: state.sessionId || null,
       timestamp: state.timestamp || new Date(),
       notes: state.notes || null,
     };
@@ -351,6 +366,33 @@ The End.`,
     };
     this.stories.set(id, newStory);
     return newStory;
+  }
+
+  async getChatMessages(userId: string, storyId: string): Promise<ChatMessage[]> {
+    return Array.from(this.chatMessages.values())
+      .filter(m => m.userId === userId && m.storyId === storyId)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  }
+
+  async createChatMessage(message: InsertChatMessage): Promise<ChatMessage> {
+    const id = randomUUID();
+    const newMessage: ChatMessage = {
+      ...message,
+      id,
+      createdAt: message.createdAt || new Date(),
+    };
+    this.chatMessages.set(id, newMessage);
+    return newMessage;
+  }
+
+  async clearChatMessages(userId: string, storyId: string): Promise<void> {
+    const keysToDelete: string[] = [];
+    this.chatMessages.forEach((msg, key) => {
+      if (msg.userId === userId && msg.storyId === storyId) {
+        keysToDelete.push(key);
+      }
+    });
+    keysToDelete.forEach(key => this.chatMessages.delete(key));
   }
 
   async getDashboardStats(userId: string): Promise<{
