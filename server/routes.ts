@@ -240,18 +240,28 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Missing required fields" });
       }
 
-      const story = await storage.getStory(storyId);
-      if (!story) {
-        return res.status(404).json({ error: "Story not found" });
+      if (typeof message !== "string" || message.length > 500) {
+        return res.status(400).json({ error: "Invalid message format" });
       }
 
       const userMessageData = {
         userId,
         storyId,
-        role: "user",
+        role: "user" as const,
         content: message,
       };
-      const userMsg = await storage.createChatMessage(userMessageData);
+
+      const parsed = insertChatMessageSchema.safeParse(userMessageData);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.issues });
+      }
+
+      const story = await storage.getStory(storyId);
+      if (!story) {
+        return res.status(404).json({ error: "Story not found" });
+      }
+
+      const userMsg = await storage.createChatMessage(parsed.data);
 
       const history = await storage.getChatMessages(userId, storyId);
 

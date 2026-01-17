@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { queryClient } from "@/lib/queryClient";
 import { 
   Play, 
   Pause,
@@ -29,8 +30,6 @@ import { apiRequest } from "@/lib/queryClient";
 import type { VibeStateType, Story, ChatMessage } from "@shared/schema";
 
 export default function Reading() {
-  const queryClient = useQueryClient();
-  
   const { data: stories, isLoading } = useQuery<Story[]>({
     queryKey: ["/api/stories"],
   });
@@ -74,13 +73,8 @@ The End.`,
   const storyId = currentStory.id;
   const userId = "user-1";
 
-  const { data: chatMessages = [], refetch: refetchChat } = useQuery<ChatMessage[]>({
-    queryKey: ["/api/chat", userId, storyId],
-    queryFn: async () => {
-      const res = await fetch(`/api/chat/${userId}/${storyId}`);
-      if (!res.ok) throw new Error("Failed to fetch chat");
-      return res.json();
-    },
+  const { data: chatMessages = [] } = useQuery<ChatMessage[]>({
+    queryKey: [`/api/chat/${userId}/${storyId}`],
     enabled: !!storyId,
   });
 
@@ -126,20 +120,18 @@ The End.`,
       return response.json();
     },
     onSuccess: () => {
-      refetchChat();
+      queryClient.invalidateQueries({ queryKey: [`/api/chat/${userId}/${storyId}`] });
       setChatInput("");
     },
   });
 
   const clearChat = useMutation({
     mutationFn: async () => {
-      const response = await fetch(`/api/chat/${userId}/${storyId}`, {
-        method: "DELETE",
-      });
+      const response = await apiRequest("DELETE", `/api/chat/${userId}/${storyId}`);
       return response.json();
     },
     onSuccess: () => {
-      refetchChat();
+      queryClient.invalidateQueries({ queryKey: [`/api/chat/${userId}/${storyId}`] });
     },
   });
 
@@ -335,7 +327,7 @@ The End.`,
                     <motion.div whileTap={{ scale: 0.95 }}>
                       <Button 
                         size="lg" 
-                        className="h-16 w-16 rounded-full"
+                        className="rounded-full"
                         onClick={togglePlay}
                         data-testid="button-play-pause"
                       >
@@ -406,7 +398,7 @@ The End.`,
                 exit={{ opacity: 0, x: 100, width: 0 }}
                 className="shrink-0"
               >
-                <Card className="h-[calc(100vh-200px)] sticky top-24 flex flex-col">
+                <Card className="h-[calc(100vh-200px)] sticky top-24 flex flex-col z-50">
                   <CardHeader className="flex flex-row items-center justify-between gap-2 py-3 px-4 border-b">
                     <CardTitle className="text-base font-child flex items-center gap-2">
                       <MessageCircle className="h-4 w-4 text-primary" />
@@ -415,8 +407,7 @@ The End.`,
                     <div className="flex items-center gap-1">
                       <Button
                         variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
+                        size="sm"
                         onClick={() => clearChat.mutate()}
                         disabled={clearChat.isPending || chatMessages.length === 0}
                         data-testid="button-clear-chat"
@@ -425,8 +416,7 @@ The End.`,
                       </Button>
                       <Button
                         variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
+                        size="sm"
                         onClick={() => setIsChatOpen(false)}
                         data-testid="button-close-chat"
                       >
@@ -448,7 +438,7 @@ The End.`,
                         <div
                           key={msg.id}
                           className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                          data-testid={`chat-message-${msg.role}`}
+                          data-testid={`chat-message-${msg.role}-${msg.id}`}
                         >
                           <div
                             className={`max-w-[85%] rounded-2xl px-4 py-2 ${
