@@ -127,11 +127,11 @@ export default function ChildDashboard() {
               className="h-20 w-20 rounded-full bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shadow-lg"
               whileHover={{ scale: 1.05 }}
             >
-              <span className="font-child text-3xl text-white">{childData.user?.name?.charAt(0) || "A"}</span>
+              <span className="font-child text-3xl text-white">{childData.user?.name?.charAt(0) || "S"}</span>
             </motion.div>
             <div>
               <h1 className="font-child text-3xl font-bold" data-testid="text-welcome">
-                Hi {childData.user?.name || "Alex"}!
+                Hi {childData.user?.name || "Shoaib"}!
               </h1>
               <p className="text-muted-foreground">Ready to learn something awesome today?</p>
             </div>
