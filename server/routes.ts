@@ -8,7 +8,7 @@ import {
   insertVibeStateSchema,
   insertChatMessageSchema
 } from "@shared/schema";
-import { generateChatResponse } from "./gemini";
+import { generateChatResponse, generateMathHelp } from "./gemini";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -350,6 +350,39 @@ export async function registerRoutes(
       });
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch child dashboard data" });
+    }
+  });
+
+  // Agentic Math Help API - powered by Gemini
+  app.post("/api/math-help", async (req, res) => {
+    try {
+      const { problem, userAnswer, correctAnswer, isCorrect } = req.body;
+      
+      // Validate request body
+      if (typeof problem !== "string" || problem.length === 0 || problem.length > 100) {
+        return res.status(400).json({ error: "Invalid problem format" });
+      }
+      if (typeof userAnswer !== "number" && typeof userAnswer !== "string") {
+        return res.status(400).json({ error: "Invalid userAnswer format" });
+      }
+      if (typeof correctAnswer !== "number" && typeof correctAnswer !== "string") {
+        return res.status(400).json({ error: "Invalid correctAnswer format" });
+      }
+      if (typeof isCorrect !== "boolean") {
+        return res.status(400).json({ error: "Invalid isCorrect format" });
+      }
+
+      const feedback = await generateMathHelp(
+        problem,
+        String(userAnswer),
+        String(correctAnswer),
+        isCorrect
+      );
+
+      res.json({ feedback });
+    } catch (error) {
+      console.error("Math help error:", error);
+      res.status(500).json({ error: "Failed to generate math help" });
     }
   });
 

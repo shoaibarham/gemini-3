@@ -23,8 +23,8 @@ The frontend follows a page-based structure with reusable components:
 - Landing page for marketing/onboarding
 - Child dashboard with gamified progress tracking
 - Parent dashboard with analytics and session monitoring
-- Reading module with text highlighting and audio sync capabilities
-- Math module with adaptive problem generation
+- Reading module with cursor-based word tracking, word highlighting, and AI chatbot assistant
+- Math module with adaptive problem generation and AI-powered feedback
 
 ### Backend Architecture
 - **Runtime**: Node.js with Express 5
@@ -39,6 +39,15 @@ The server provides endpoints for:
 - Math progress tracking
 - Vibe state monitoring (emotional state during learning)
 - Story content management
+- AI Chat (Gemini-powered reading buddy)
+- AI Math Help (Gemini-powered feedback)
+
+### AI Integration (Gemini 2.0 Flash)
+- **Model**: gemini-2.0-flash for all AI features
+- **Reading Buddy**: Agentic chatbot that helps children understand stories, explains vocabulary, and encourages reading comprehension
+- **Math Tutor**: Provides personalized feedback after each math problem, explaining mistakes kindly and celebrating successes
+- **Word Definitions**: Click any word in the reading interface to get a child-friendly AI explanation
+- **Location**: `server/gemini.ts` contains all Gemini integration code
 
 ### Data Storage
 - **ORM**: Drizzle ORM with PostgreSQL dialect
@@ -53,6 +62,7 @@ Database tables:
 - `math_progress`: Problem attempts, accuracy, levels, and streaks
 - `vibe_states`: Emotional state snapshots during sessions
 - `stories`: Reading content library
+- `chat_messages`: AI chat conversation history per user/story
 
 ### Design Patterns
 - **Shared Schema**: Zod schemas generated from Drizzle for validation on both client and server

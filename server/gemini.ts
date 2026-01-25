@@ -2,18 +2,31 @@ import { GoogleGenAI } from "@google/genai";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
-const CHILD_SAFE_SYSTEM_PROMPT = `You are a friendly reading buddy helping children understand stories. You should:
-- Use simple, age-appropriate language (suitable for ages 5-10)
-- Be encouraging and supportive
-- Answer questions about the story being read
-- Help explain vocabulary words in simple terms
-- Ask fun follow-up questions to encourage comprehension
-- Keep responses brief (2-3 sentences for most answers)
-- Never discuss inappropriate topics
-- If asked about anything not related to the story or reading, gently redirect to the story
-- Use a warm, friendly tone
+// Enhanced agentic system prompt for Gemini 2.5 Flash
+const AGENTIC_READING_BUDDY_PROMPT = `You are an intelligent, proactive AI Reading Buddy designed to help children learn and enjoy reading. You operate in an "agentic" mode - meaning you should be:
 
-You are helping a child read a story. Answer their questions about the story content, characters, vocabulary, or anything related to reading comprehension.`;
+1. PROACTIVE: Don't just answer questions - suggest related concepts, ask follow-up questions, and guide the learning journey
+2. CONTEXTUAL: Use the story context to provide rich, relevant explanations
+3. EDUCATIONAL: Every response should teach something while being engaging
+4. ENCOURAGING: Celebrate curiosity and make learning feel like an adventure
+
+Your capabilities include:
+- Explaining vocabulary words in child-friendly terms with examples
+- Helping children understand story elements (characters, plot, setting, themes)
+- Making connections between the story and real life
+- Asking thought-provoking questions to deepen comprehension
+- Suggesting what to look for as they continue reading
+- Providing fun facts related to story elements
+
+Guidelines:
+- Use simple, age-appropriate language (suitable for ages 5-10)
+- Keep responses brief but meaningful (2-4 sentences for most answers)
+- Use enthusiasm and positive energy
+- Include examples from everyday life when explaining concepts
+- End responses with an engaging question or suggestion when appropriate
+- If asked about anything inappropriate or off-topic, gently redirect to the story
+
+You are powered by Gemini and should demonstrate advanced reasoning while keeping responses child-friendly.`;
 
 export interface ChatContext {
   storyTitle: string;
@@ -27,38 +40,166 @@ export async function generateChatResponse(
   conversationHistory: Array<{ role: string; content: string }>
 ): Promise<string> {
   try {
-    const contextPrompt = `
-Story Title: "${context.storyTitle}"
+    // Detect if this is a word definition request
+    const isWordDefinition = userMessage.toLowerCase().includes("what does") && 
+                             userMessage.toLowerCase().includes("mean");
+    
+    // Extract the word being asked about if it's a definition request
+    const wordMatch = userMessage.match(/["']([^"']+)["']/);
+    const targetWord = wordMatch ? wordMatch[1] : null;
 
-Story Content:
+    // Build context with reading position awareness
+    const wordsArray = context.storyContent.split(/\s+/).filter(w => w.trim());
+    const readProgress = context.currentPosition 
+      ? Math.round((context.currentPosition / wordsArray.length) * 100)
+      : 0;
+    
+    const surroundingContext = context.currentPosition 
+      ? wordsArray.slice(
+          Math.max(0, context.currentPosition - 15), 
+          Math.min(wordsArray.length, context.currentPosition + 15)
+        ).join(" ")
+      : "";
+
+    let agenticPrompt = `
+STORY CONTEXT:
+Title: "${context.storyTitle}"
+
+Full Story:
 ${context.storyContent}
 
-${context.currentPosition ? `The child has read up to word ${context.currentPosition} of the story.` : ""}
+READING PROGRESS:
+The child has read approximately ${readProgress}% of the story${context.currentPosition ? ` (around word ${context.currentPosition})` : ""}.
+${surroundingContext ? `They are currently near this part: "...${surroundingContext}..."` : ""}
 
-Previous conversation:
-${conversationHistory.slice(-6).map(m => `${m.role === "user" ? "Child" : "Reading Buddy"}: ${m.content}`).join("\n")}
+CONVERSATION HISTORY:
+${conversationHistory.slice(-8).map(m => 
+  `${m.role === "user" ? "Child" : "AI Buddy"}: ${m.content}`
+).join("\n") || "This is the start of the conversation."}
 
-Child's question: ${userMessage}
+CURRENT REQUEST:
+Child: ${userMessage}
 
-Please respond as a friendly reading buddy:`;
+`;
+
+    // Add special instructions for word definitions
+    if (isWordDefinition && targetWord) {
+      agenticPrompt += `
+SPECIAL INSTRUCTION - WORD DEFINITION:
+The child is asking about the word "${targetWord}". Provide:
+1. A simple, child-friendly definition
+2. An example using the word in a sentence
+3. How this word is used in the story context
+4. A fun fact or related word if appropriate
+
+Be enthusiastic about their curiosity!
+`;
+    } else {
+      agenticPrompt += `
+AGENTIC RESPONSE GUIDELINES:
+1. Answer their question thoroughly but concisely
+2. Connect your answer to the story when possible
+3. End with an engaging follow-up question or fun observation
+4. If they seem stuck, offer helpful hints or encouragement
+`;
+    }
+
+    agenticPrompt += `
+Respond as an enthusiastic, intelligent AI Reading Buddy:`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: contextPrompt,
+      model: "gemini-2.0-flash",
+      contents: agenticPrompt,
       config: {
-        systemInstruction: CHILD_SAFE_SYSTEM_PROMPT,
+        systemInstruction: AGENTIC_READING_BUDDY_PROMPT,
+        temperature: 0.7,
+        maxOutputTokens: 300,
       },
     });
 
     const text = response.text;
     
     if (!text) {
-      return "I'm not sure about that. Can you tell me more about what part of the story you're curious about?";
+      return "Hmm, that's a great question! Can you tell me more about what part of the story made you curious?";
     }
 
     return text;
   } catch (error) {
     console.error("Gemini API error:", error);
-    return "Hmm, I'm having trouble thinking right now. Can you try asking again?";
+    return "Oops! My thinking cap slipped off for a moment. Can you ask me again? I really want to help!";
+  }
+}
+
+// New agentic function for proactive reading suggestions
+export async function generateReadingSuggestion(
+  context: ChatContext,
+  progressPercent: number
+): Promise<string> {
+  try {
+    const prompt = `
+Based on a child reading "${context.storyTitle}" who is ${progressPercent}% through the story, generate ONE short, encouraging observation or question to keep them engaged.
+
+Story excerpt around their current position:
+${context.storyContent.slice(0, 500)}...
+
+Generate a brief (1 sentence) proactive suggestion or observation that:
+- Encourages them to keep reading
+- Highlights something interesting coming up
+- Or asks a simple comprehension question
+
+Keep it under 15 words and very child-friendly.`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.0-flash",
+      contents: prompt,
+      config: {
+        temperature: 0.8,
+        maxOutputTokens: 50,
+      },
+    });
+
+    return response.text || "";
+  } catch (error) {
+    console.error("Gemini suggestion error:", error);
+    return "";
+  }
+}
+
+// Math helper powered by Gemini
+export async function generateMathHelp(
+  problem: string,
+  userAnswer: string,
+  correctAnswer: string,
+  isCorrect: boolean
+): Promise<string> {
+  try {
+    const prompt = isCorrect
+      ? `A child just correctly solved: ${problem} = ${correctAnswer}
+         Generate a brief (1-2 sentences) celebratory message that:
+         - Praises their effort
+         - Maybe mentions a quick math tip or fun fact
+         Keep it enthusiastic and child-friendly!`
+      : `A child answered "${userAnswer}" for the problem: ${problem}
+         The correct answer is ${correctAnswer}.
+         Generate a kind, encouraging explanation (2-3 sentences) that:
+         - Gently explains why their answer wasn't quite right
+         - Shows how to get the correct answer step by step
+         - Encourages them to try again
+         Be supportive and never make them feel bad!`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.0-flash",
+      contents: prompt,
+      config: {
+        systemInstruction: "You are a friendly, encouraging math tutor for children ages 5-10. Be positive, clear, and supportive.",
+        temperature: 0.7,
+        maxOutputTokens: 150,
+      },
+    });
+
+    return response.text || (isCorrect ? "Great job!" : "Good try! Let's figure this out together.");
+  } catch (error) {
+    console.error("Gemini math help error:", error);
+    return isCorrect ? "Excellent work!" : "That's okay! Let's try another one.";
   }
 }

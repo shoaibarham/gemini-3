@@ -16,7 +16,9 @@ import {
   MessageCircle,
   Send,
   X,
-  Trash2
+  Trash2,
+  MousePointer2,
+  Sparkles
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,10 +26,18 @@ import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Badge } from "@/components/ui/badge";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { VibeMonitor } from "@/components/vibe-monitor";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { apiRequest } from "@/lib/queryClient";
 import type { VibeStateType, Story, ChatMessage } from "@shared/schema";
+
+type ReadingMode = "auto" | "cursor";
 
 export default function Reading() {
   const { data: stories, isLoading } = useQuery<Story[]>({
@@ -78,13 +88,17 @@ The End.`,
     enabled: !!storyId,
   });
 
+  const [readingMode, setReadingMode] = useState<ReadingMode>("cursor");
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentWordIndex, setCurrentWordIndex] = useState(0);
+  const [hoveredWordIndex, setHoveredWordIndex] = useState<number | null>(null);
+  const [selectedWord, setSelectedWord] = useState<string | null>(null);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [currentVibe, setCurrentVibe] = useState<VibeStateType>("focused");
   const [elapsedTime, setElapsedTime] = useState(0);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
+  const [isDefining, setIsDefining] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
   const saveReadingProgress = useMutation({
@@ -122,6 +136,8 @@ The End.`,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [`/api/chat/${userId}/${storyId}`] });
       setChatInput("");
+      setSelectedWord(null);
+      setIsDefining(false);
     },
   });
 
@@ -137,11 +153,15 @@ The End.`,
 
   const words = currentStory.content.split(/(\s+)/).filter(w => w.trim());
   const totalWords = words.length;
-  const progress = (currentWordIndex / totalWords) * 100;
+  const effectiveWordIndex = readingMode === "cursor" && hoveredWordIndex !== null 
+    ? hoveredWordIndex 
+    : currentWordIndex;
+  const progress = (effectiveWordIndex / totalWords) * 100;
 
+  // Auto-play mode effect
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (isPlaying && currentWordIndex < totalWords) {
+    if (readingMode === "auto" && isPlaying && currentWordIndex < totalWords) {
       interval = setInterval(() => {
         setCurrentWordIndex((prev) => {
           const newIndex = Math.min(prev + 1, totalWords);
@@ -157,31 +177,45 @@ The End.`,
       }, 600 / playbackSpeed);
     }
     return () => clearInterval(interval);
-  }, [isPlaying, currentWordIndex, totalWords, playbackSpeed]);
+  }, [readingMode, isPlaying, currentWordIndex, totalWords, playbackSpeed]);
 
+  // Timer effect
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (isPlaying) {
+    if (isPlaying || (readingMode === "cursor" && hoveredWordIndex !== null)) {
       interval = setInterval(() => {
         setElapsedTime((prev) => prev + 1);
       }, 1000);
     }
     return () => clearInterval(interval);
-  }, [isPlaying]);
+  }, [isPlaying, readingMode, hoveredWordIndex]);
 
+  // Vibe tracking
   useEffect(() => {
     if (progress > 75) {
       setCurrentVibe("happy");
-    } else if (isPlaying) {
+    } else if (isPlaying || (readingMode === "cursor" && hoveredWordIndex !== null)) {
       setCurrentVibe("focused");
     }
-  }, [progress, isPlaying]);
+  }, [progress, isPlaying, readingMode, hoveredWordIndex]);
 
+  // Chat scroll
   useEffect(() => {
     if (chatScrollRef.current) {
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
     }
   }, [chatMessages]);
+
+  // Save progress periodically in cursor mode
+  useEffect(() => {
+    if (readingMode === "cursor" && hoveredWordIndex !== null && hoveredWordIndex % 10 === 0) {
+      saveReadingProgress.mutate({
+        wordsRead: hoveredWordIndex,
+        currentPosition: hoveredWordIndex,
+        completed: hoveredWordIndex >= totalWords - 1,
+      });
+    }
+  }, [hoveredWordIndex, readingMode]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -222,27 +256,64 @@ The End.`,
     }
   };
 
+  const handleWordClick = (word: string, index: number) => {
+    const cleanWord = word.replace(/[^a-zA-Z'-]/g, "");
+    if (cleanWord.length > 2) {
+      setSelectedWord(cleanWord);
+      setIsChatOpen(true);
+      setIsDefining(true);
+      sendChatMessage.mutate(`What does the word "${cleanWord}" mean? Please explain it simply.`);
+    }
+  };
+
+  const handleWordHover = (index: number) => {
+    if (readingMode === "cursor") {
+      setHoveredWordIndex(index);
+      // Update the current word index to track cursor position
+      setCurrentWordIndex(index);
+    }
+  };
+
   const renderWord = (word: string, index: number) => {
-    const isCurrentWord = index === currentWordIndex;
-    const isPastWord = index < currentWordIndex;
+    const isCurrentWord = readingMode === "cursor" 
+      ? index === hoveredWordIndex 
+      : index === currentWordIndex;
+    const isPastWord = readingMode === "cursor"
+      ? hoveredWordIndex !== null && index < hoveredWordIndex
+      : index < currentWordIndex;
+    const cleanWord = word.replace(/[^a-zA-Z'-]/g, "");
+    const isClickable = cleanWord.length > 2;
 
     return (
-      <motion.span
-        key={index}
-        className={`inline transition-all duration-200 ${
-          isCurrentWord 
-            ? "bg-primary/20 text-primary font-bold rounded px-1" 
-            : isPastWord 
-              ? "text-muted-foreground" 
-              : "text-foreground"
-        }`}
-        animate={{
-          scale: isCurrentWord ? 1.05 : 1,
-        }}
-        data-testid={`word-${index}`}
-      >
-        {word}{" "}
-      </motion.span>
+      <Tooltip key={index}>
+        <TooltipTrigger asChild>
+          <motion.span
+            className={`inline transition-all duration-200 cursor-pointer select-none ${
+              isCurrentWord 
+                ? "bg-primary/20 text-primary font-bold rounded px-1" 
+                : isPastWord 
+                  ? "text-muted-foreground" 
+                  : "text-foreground"
+            } ${isClickable ? "hover:bg-primary/10 hover:rounded" : ""}`}
+            animate={{
+              scale: isCurrentWord ? 1.05 : 1,
+            }}
+            onMouseEnter={() => handleWordHover(index)}
+            onClick={() => handleWordClick(word, index)}
+            data-testid={`word-${index}`}
+          >
+            {word}{" "}
+          </motion.span>
+        </TooltipTrigger>
+        {isClickable && (
+          <TooltipContent side="top" className="font-child">
+            <p className="flex items-center gap-1">
+              <Sparkles className="h-3 w-3" />
+              Click to learn about "{cleanWord}"
+            </p>
+          </TooltipContent>
+        )}
+      </Tooltip>
     );
   };
 
@@ -288,15 +359,32 @@ The End.`,
           >
             <div className="text-center space-y-2">
               <h1 className="font-child text-3xl font-bold" data-testid="text-story-title">{currentStory.title}</h1>
-              <p className="text-muted-foreground">Read along with the highlighted words</p>
+              <p className="text-muted-foreground">
+                {readingMode === "cursor" 
+                  ? "Move your cursor over words to read along" 
+                  : "Read along with the highlighted words"}
+              </p>
             </div>
 
             <Card className="overflow-hidden">
               <CardContent className="p-8">
                 <div className="mb-6">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm text-muted-foreground">Progress</span>
-                    <span className="text-sm font-medium" data-testid="text-word-progress">{currentWordIndex} / {totalWords} words</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">Progress</span>
+                      <Badge 
+                        variant={readingMode === "cursor" ? "default" : "secondary"}
+                        className="text-xs"
+                        data-testid="badge-reading-mode"
+                      >
+                        {readingMode === "cursor" ? (
+                          <><MousePointer2 className="h-3 w-3 mr-1" /> Cursor Mode</>
+                        ) : (
+                          <><Play className="h-3 w-3 mr-1" /> Auto Mode</>
+                        )}
+                      </Badge>
+                    </div>
+                    <span className="text-sm font-medium" data-testid="text-word-progress">{effectiveWordIndex} / {totalWords} words</span>
                   </div>
                   <Progress value={progress} className="h-2" data-testid="progress-bar" />
                 </div>
@@ -304,69 +392,113 @@ The End.`,
                 <div 
                   className="font-child text-2xl leading-relaxed max-h-[50vh] overflow-y-auto p-4 rounded-xl bg-muted/30"
                   data-testid="text-story-content"
+                  onMouseLeave={() => readingMode === "cursor" && setHoveredWordIndex(null)}
                 >
                   {words.map((word, index) => renderWord(word, index))}
                 </div>
+
+                <p className="text-xs text-muted-foreground text-center mt-4">
+                  <Sparkles className="h-3 w-3 inline mr-1" />
+                  Click on any word to get an AI explanation!
+                </p>
               </CardContent>
             </Card>
 
             <Card>
               <CardContent className="p-6">
                 <div className="flex flex-col items-center gap-6">
-                  <div className="flex items-center gap-4">
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      onClick={skipBack}
-                      disabled={currentWordIndex === 0}
-                      data-testid="button-skip-back"
+                  {/* Mode Toggle */}
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant={readingMode === "cursor" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => {
+                        setReadingMode("cursor");
+                        setIsPlaying(false);
+                      }}
+                      className="gap-2"
+                      data-testid="button-cursor-mode"
                     >
-                      <SkipBack className="h-5 w-5" />
+                      <MousePointer2 className="h-4 w-4" />
+                      Cursor Tracking
                     </Button>
-
-                    <motion.div whileTap={{ scale: 0.95 }}>
-                      <Button 
-                        size="lg" 
-                        className="rounded-full"
-                        onClick={togglePlay}
-                        data-testid="button-play-pause"
-                      >
-                        {isPlaying ? (
-                          <Pause className="h-6 w-6" />
-                        ) : (
-                          <Play className="h-6 w-6 ml-1" />
-                        )}
-                      </Button>
-                    </motion.div>
-
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      onClick={skipForward}
-                      disabled={currentWordIndex >= totalWords}
-                      data-testid="button-skip-forward"
+                    <Button
+                      variant={readingMode === "auto" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setReadingMode("auto")}
+                      className="gap-2"
+                      data-testid="button-auto-mode"
                     >
-                      <SkipForward className="h-5 w-5" />
+                      <Play className="h-4 w-4" />
+                      Auto Read
                     </Button>
                   </div>
 
-                  <div className="flex items-center gap-4 w-full max-w-xs">
-                    <Volume2 className="h-4 w-4 text-muted-foreground" />
-                    <div className="flex-1">
-                      <label className="text-xs text-muted-foreground mb-1 block">
-                        Speed: {playbackSpeed}x
-                      </label>
-                      <Slider
-                        value={[playbackSpeed]}
-                        onValueChange={([value]) => setPlaybackSpeed(value)}
-                        min={0.5}
-                        max={2}
-                        step={0.25}
-                        className="w-full"
-                        data-testid="slider-speed"
-                      />
-                    </div>
-                  </div>
+                  {/* Auto-play controls - only show in auto mode */}
+                  {readingMode === "auto" && (
+                    <>
+                      <div className="flex items-center gap-4">
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          onClick={skipBack}
+                          disabled={currentWordIndex === 0}
+                          data-testid="button-skip-back"
+                        >
+                          <SkipBack className="h-5 w-5" />
+                        </Button>
+
+                        <motion.div whileTap={{ scale: 0.95 }}>
+                          <Button 
+                            size="lg" 
+                            className="rounded-full"
+                            onClick={togglePlay}
+                            data-testid="button-play-pause"
+                          >
+                            {isPlaying ? (
+                              <Pause className="h-6 w-6" />
+                            ) : (
+                              <Play className="h-6 w-6 ml-1" />
+                            )}
+                          </Button>
+                        </motion.div>
+
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          onClick={skipForward}
+                          disabled={currentWordIndex >= totalWords}
+                          data-testid="button-skip-forward"
+                        >
+                          <SkipForward className="h-5 w-5" />
+                        </Button>
+                      </div>
+
+                      <div className="flex items-center gap-4 w-full max-w-xs">
+                        <Volume2 className="h-4 w-4 text-muted-foreground" />
+                        <div className="flex-1">
+                          <label className="text-xs text-muted-foreground mb-1 block">
+                            Speed: {playbackSpeed}x
+                          </label>
+                          <Slider
+                            value={[playbackSpeed]}
+                            onValueChange={([value]) => setPlaybackSpeed(value)}
+                            min={0.5}
+                            max={2}
+                            step={0.25}
+                            className="w-full"
+                            data-testid="slider-speed"
+                          />
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {readingMode === "cursor" && (
+                    <p className="text-sm text-muted-foreground text-center">
+                      Hover over words to track your reading. The highlighted word follows your cursor!
+                    </p>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -385,7 +517,7 @@ The End.`,
                 data-testid="button-toggle-chat"
               >
                 <MessageCircle className="h-4 w-4" />
-                {isChatOpen ? "Close Chat" : "Ask a Question"}
+                {isChatOpen ? "Close Chat" : "Ask AI Buddy"}
               </Button>
             </div>
           </motion.div>
@@ -401,8 +533,8 @@ The End.`,
                 <Card className="h-[calc(100vh-200px)] sticky top-24 flex flex-col z-50">
                   <CardHeader className="flex flex-row items-center justify-between gap-2 py-3 px-4 border-b">
                     <CardTitle className="text-base font-child flex items-center gap-2">
-                      <MessageCircle className="h-4 w-4 text-primary" />
-                      Reading Buddy
+                      <Sparkles className="h-4 w-4 text-primary" />
+                      AI Reading Buddy
                     </CardTitle>
                     <div className="flex items-center gap-1">
                       <Button
@@ -429,9 +561,27 @@ The End.`,
                     <div className="space-y-4">
                       {chatMessages.length === 0 && (
                         <div className="text-center text-muted-foreground py-8">
-                          <MessageCircle className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                          <p className="font-child text-sm">Hi there! I'm your reading buddy.</p>
-                          <p className="text-xs mt-2">Ask me anything about the story!</p>
+                          <Sparkles className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                          <p className="font-child text-sm">Hi there! I'm your AI reading buddy!</p>
+                          <p className="text-xs mt-2">Click on words in the story or ask me anything!</p>
+                          <div className="mt-4 space-y-2">
+                            <p className="text-xs font-medium">Try asking:</p>
+                            <div className="flex flex-wrap gap-2 justify-center">
+                              {["Who is Finn?", "What happens next?", "Explain 'adventure'"].map((q) => (
+                                <Badge 
+                                  key={q} 
+                                  variant="outline" 
+                                  className="cursor-pointer text-xs"
+                                  onClick={() => {
+                                    setChatInput(q);
+                                    sendChatMessage.mutate(q);
+                                  }}
+                                >
+                                  {q}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
                         </div>
                       )}
                       {chatMessages.map((msg) => (
@@ -453,8 +603,11 @@ The End.`,
                       ))}
                       {sendChatMessage.isPending && (
                         <div className="flex justify-start">
-                          <div className="bg-muted rounded-2xl px-4 py-2">
+                          <div className="bg-muted rounded-2xl px-4 py-2 flex items-center gap-2">
                             <Loader2 className="h-4 w-4 animate-spin" />
+                            <span className="text-xs font-child">
+                              {isDefining ? `Learning about "${selectedWord}"...` : "Thinking..."}
+                            </span>
                           </div>
                         </div>
                       )}

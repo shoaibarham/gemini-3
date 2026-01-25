@@ -11,7 +11,9 @@ import {
   X,
   RotateCcw,
   Lightbulb,
-  Clock
+  Clock,
+  Sparkles,
+  Loader2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -83,6 +85,7 @@ export default function MathPage() {
   const [showHint, setShowHint] = useState(false);
   const [currentVibe, setCurrentVibe] = useState<VibeStateType>("focused");
   const [elapsedTime, setElapsedTime] = useState(0);
+  const [aiFeedback, setAiFeedback] = useState<string | null>(null);
 
   const saveMathProgress = useMutation({
     mutationFn: async (data: { problemsAttempted: number; problemsCorrect: number; currentLevel: number; streak: number }) => {
@@ -101,6 +104,16 @@ export default function MathPage() {
         state,
       });
       return response.json();
+    },
+  });
+
+  const getMathHelp = useMutation({
+    mutationFn: async (data: { problem: string; userAnswer: number; correctAnswer: number; isCorrect: boolean }) => {
+      const response = await apiRequest("POST", "/api/math-help", data);
+      return response.json();
+    },
+    onSuccess: (data) => {
+      setAiFeedback(data.feedback);
     },
   });
 
@@ -152,12 +165,22 @@ export default function MathPage() {
     const isCorrect = userAnswer === currentProblem.answer;
     
     setShowResult(isCorrect ? "correct" : "incorrect");
+    setAiFeedback(null);
     const newProblemsCompleted = problemsCompleted + 1;
     setProblemsCompleted(newProblemsCompleted);
     
     let newCorrectAnswers = correctAnswers;
     let newStreak = streak;
     let newLevel = level;
+
+    // Get AI feedback
+    const problemStr = `${currentProblem.operand1} ${operatorSymbols[currentProblem.type]} ${currentProblem.operand2}`;
+    getMathHelp.mutate({
+      problem: problemStr,
+      userAnswer,
+      correctAnswer: currentProblem.answer,
+      isCorrect,
+    });
 
     if (isCorrect) {
       newCorrectAnswers = correctAnswers + 1;
@@ -189,12 +212,14 @@ export default function MathPage() {
       streak: newStreak,
     });
     
+    // Longer timeout to allow reading AI feedback
     setTimeout(() => {
       setShowResult(null);
       setUserInput("");
       setShowHint(false);
+      setAiFeedback(null);
       setCurrentProblem(generateProblem(level));
-    }, 1500);
+    }, 3500);
   };
 
   const getHint = () => {
@@ -328,22 +353,53 @@ export default function MathPage() {
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0 }}
-                        className={`flex items-center justify-center gap-2 text-lg font-medium ${
-                          showResult === "correct" ? "text-emerald-500" : "text-red-500"
-                        }`}
-                        data-testid="text-result"
+                        className="space-y-3"
                       >
-                        {showResult === "correct" ? (
-                          <>
-                            <Check className="h-5 w-5" />
-                            <span>Great job!</span>
-                          </>
-                        ) : (
-                          <>
-                            <X className="h-5 w-5" />
-                            <span>The answer is {currentProblem.answer}</span>
-                          </>
-                        )}
+                        <div 
+                          className={`flex items-center justify-center gap-2 text-lg font-medium ${
+                            showResult === "correct" ? "text-emerald-500" : "text-red-500"
+                          }`}
+                          data-testid="text-result"
+                        >
+                          {showResult === "correct" ? (
+                            <>
+                              <Check className="h-5 w-5" />
+                              <span>Great job!</span>
+                            </>
+                          ) : (
+                            <>
+                              <X className="h-5 w-5" />
+                              <span>The answer is {currentProblem.answer}</span>
+                            </>
+                          )}
+                        </div>
+                        
+                        {/* AI Feedback */}
+                        <motion.div
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ delay: 0.3 }}
+                          className={`flex items-start gap-2 p-3 rounded-xl ${
+                            showResult === "correct" 
+                              ? "bg-emerald-500/10 border border-emerald-500/20" 
+                              : "bg-blue-500/10 border border-blue-500/20"
+                          }`}
+                          data-testid="ai-feedback"
+                        >
+                          <Sparkles className="h-4 w-4 mt-0.5 text-primary shrink-0" />
+                          <div className="text-sm font-child">
+                            {getMathHelp.isPending ? (
+                              <div className="flex items-center gap-2">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                <span>AI is thinking...</span>
+                              </div>
+                            ) : aiFeedback ? (
+                              <span data-testid="text-ai-feedback">{aiFeedback}</span>
+                            ) : (
+                              <span>{showResult === "correct" ? "Excellent work!" : "Keep trying, you'll get it!"}</span>
+                            )}
+                          </div>
+                        </motion.div>
                       </motion.div>
                     )}
                   </AnimatePresence>
