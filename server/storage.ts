@@ -5,7 +5,8 @@ import {
   type MathProgress, type InsertMathProgress,
   type VibeState, type InsertVibeState,
   type Story, type InsertStory,
-  type ChatMessage, type InsertChatMessage
+  type ChatMessage, type InsertChatMessage,
+  type Quiz, type InsertQuiz
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 
@@ -41,6 +42,11 @@ export interface IStorage {
   createChatMessage(message: InsertChatMessage): Promise<ChatMessage>;
   clearChatMessages(userId: string, storyId: string): Promise<void>;
 
+  getQuizzes(userId: string): Promise<Quiz[]>;
+  getQuizByStory(userId: string, storyId: string): Promise<Quiz | undefined>;
+  createQuiz(quiz: InsertQuiz): Promise<Quiz>;
+  updateQuiz(id: string, updates: Partial<Quiz>): Promise<Quiz | undefined>;
+
   getDashboardStats(userId: string): Promise<{
     totalReadingTime: number;
     totalMathProblems: number;
@@ -58,6 +64,7 @@ export class MemStorage implements IStorage {
   private vibeStates: Map<string, VibeState>;
   private stories: Map<string, Story>;
   private chatMessages: Map<string, ChatMessage>;
+  private quizzes: Map<string, Quiz>;
 
   constructor() {
     this.users = new Map();
@@ -67,6 +74,7 @@ export class MemStorage implements IStorage {
     this.vibeStates = new Map();
     this.stories = new Map();
     this.chatMessages = new Map();
+    this.quizzes = new Map();
 
     this.seedData();
   }
@@ -393,6 +401,40 @@ The End.`,
       }
     });
     keysToDelete.forEach(key => this.chatMessages.delete(key));
+  }
+
+  async getQuizzes(userId: string): Promise<Quiz[]> {
+    return Array.from(this.quizzes.values())
+      .filter(q => q.userId === userId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  async getQuizByStory(userId: string, storyId: string): Promise<Quiz | undefined> {
+    return Array.from(this.quizzes.values())
+      .find(q => q.userId === userId && q.storyId === storyId);
+  }
+
+  async createQuiz(quiz: InsertQuiz): Promise<Quiz> {
+    const id = randomUUID();
+    const newQuiz: Quiz = {
+      ...quiz,
+      id,
+      answers: quiz.answers || null,
+      score: quiz.score || null,
+      passed: quiz.passed || null,
+      completedAt: quiz.completedAt || null,
+      createdAt: quiz.createdAt || new Date(),
+    };
+    this.quizzes.set(id, newQuiz);
+    return newQuiz;
+  }
+
+  async updateQuiz(id: string, updates: Partial<Quiz>): Promise<Quiz | undefined> {
+    const quiz = this.quizzes.get(id);
+    if (!quiz) return undefined;
+    const updated = { ...quiz, ...updates };
+    this.quizzes.set(id, updated);
+    return updated;
   }
 
   async getDashboardStats(userId: string): Promise<{

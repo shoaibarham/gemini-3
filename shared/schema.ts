@@ -67,6 +67,19 @@ export const chatMessages = pgTable("chat_messages", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export const quizzes = pgTable("quizzes", {
+  id: varchar("id", { length: 36 }).primaryKey(),
+  userId: varchar("user_id", { length: 36 }).notNull(),
+  storyId: varchar("story_id", { length: 36 }).notNull(),
+  questions: text("questions").notNull(),
+  answers: text("answers"),
+  score: integer("score"),
+  totalQuestions: integer("total_questions").notNull(),
+  passed: boolean("passed"),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const insertUserSchema = createInsertSchema(users).omit({ id: true });
 export const insertSessionSchema = createInsertSchema(sessions).omit({ id: true });
 export const insertReadingProgressSchema = createInsertSchema(readingProgress).omit({ id: true });
@@ -74,6 +87,7 @@ export const insertMathProgressSchema = createInsertSchema(mathProgress).omit({ 
 export const insertVibeStateSchema = createInsertSchema(vibeStates).omit({ id: true });
 export const insertStorySchema = createInsertSchema(stories).omit({ id: true });
 export const insertChatMessageSchema = createInsertSchema(chatMessages).omit({ id: true });
+export const insertQuizSchema = createInsertSchema(quizzes).omit({ id: true });
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
@@ -89,6 +103,8 @@ export type InsertStory = z.infer<typeof insertStorySchema>;
 export type Story = typeof stories.$inferSelect;
 export type InsertChatMessage = z.infer<typeof insertChatMessageSchema>;
 export type ChatMessage = typeof chatMessages.$inferSelect;
+export type InsertQuiz = z.infer<typeof insertQuizSchema>;
+export type Quiz = typeof quizzes.$inferSelect;
 
 export type VibeStateType = "focused" | "happy" | "confused" | "frustrated" | "tired" | "neutral";
 
@@ -143,4 +159,21 @@ export interface MathSessionData {
   correctAnswers: number;
   streak: number;
   level: number;
+}
+
+export interface QuizQuestion {
+  id: string;
+  question: string;
+  options: string[];
+  correctAnswer: number;
+}
+
+export interface QuizResult {
+  quizId: string;
+  storyId: string;
+  storyTitle: string;
+  score: number;
+  totalQuestions: number;
+  passed: boolean;
+  completedAt: Date;
 }

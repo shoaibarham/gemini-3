@@ -165,6 +165,130 @@ Keep it under 15 words and very child-friendly.`;
   }
 }
 
+// Quiz generation powered by Gemini
+export async function generateQuiz(
+  storyTitle: string,
+  storyContent: string,
+  numQuestions: number = 3
+): Promise<Array<{ question: string; options: string[]; correctAnswer: number }>> {
+  try {
+    const prompt = `Generate ${numQuestions} reading comprehension quiz questions for a child (ages 5-10) based on this story.
+
+STORY TITLE: "${storyTitle}"
+
+STORY CONTENT:
+${storyContent}
+
+Requirements:
+1. Questions should test understanding of the story (characters, events, themes)
+2. Each question should have exactly 4 answer options
+3. Options should be simple and clear for children
+4. Mix different types: who/what/where/why questions
+5. One option must be clearly correct
+
+Return ONLY a valid JSON array in this exact format (no other text):
+[
+  {
+    "question": "Your question here?",
+    "options": ["Option A", "Option B", "Option C", "Option D"],
+    "correctAnswer": 0
+  }
+]
+
+Where correctAnswer is the index (0-3) of the correct option.`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.0-flash",
+      contents: prompt,
+      config: {
+        temperature: 0.5,
+        maxOutputTokens: 800,
+      },
+    });
+
+    const text = response.text || "";
+    
+    // Parse JSON from response
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    if (jsonMatch) {
+      const questions = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(questions) && questions.length > 0) {
+        return questions.slice(0, numQuestions);
+      }
+    }
+
+    // Fallback questions if parsing fails
+    return getDefaultQuestions(storyTitle);
+  } catch (error) {
+    console.error("Gemini quiz generation error:", error);
+    return getDefaultQuestions(storyTitle);
+  }
+}
+
+function getDefaultQuestions(storyTitle: string): Array<{ question: string; options: string[]; correctAnswer: number }> {
+  return [
+    {
+      question: "What was the main character doing in the story?",
+      options: ["Going on an adventure", "Sleeping at home", "Going to school", "Eating dinner"],
+      correctAnswer: 0
+    },
+    {
+      question: "How did the story end?",
+      options: ["Sadly", "Happily", "Mysteriously", "Suddenly"],
+      correctAnswer: 1
+    },
+    {
+      question: "What is this story about?",
+      options: ["A big city", "Friendship and adventure", "A scary monster", "A boring day"],
+      correctAnswer: 1
+    }
+  ];
+}
+
+// Evaluate quiz answers using AI
+export async function evaluateQuizPerformance(
+  storyTitle: string,
+  score: number,
+  totalQuestions: number,
+  wrongQuestions: string[]
+): Promise<string> {
+  try {
+    const percentage = Math.round((score / totalQuestions) * 100);
+    const passed = percentage >= 70;
+    
+    const prompt = passed
+      ? `A child just completed a quiz about "${storyTitle}" and scored ${score}/${totalQuestions} (${percentage}%).
+         Generate a short (2 sentences) celebratory message that:
+         - Congratulates them on their excellent comprehension
+         - Encourages them to keep reading
+         Keep it enthusiastic and child-friendly!`
+      : `A child just completed a quiz about "${storyTitle}" and scored ${score}/${totalQuestions} (${percentage}%).
+         They had trouble with these concepts: ${wrongQuestions.join(", ") || "some questions"}.
+         Generate a kind, encouraging message (2-3 sentences) that:
+         - Praises their effort
+         - Gently suggests re-reading parts of the story
+         - Encourages them that they can try again
+         Be supportive and never make them feel bad!`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.0-flash",
+      contents: prompt,
+      config: {
+        systemInstruction: "You are a friendly, encouraging reading tutor for children ages 5-10. Be positive, clear, and supportive.",
+        temperature: 0.7,
+        maxOutputTokens: 150,
+      },
+    });
+
+    return response.text || (passed ? "Great job on the quiz!" : "Good try! You can always try again.");
+  } catch (error) {
+    console.error("Gemini quiz evaluation error:", error);
+    return score >= Math.ceil(totalQuestions * 0.7) 
+      ? "Wonderful work on the quiz! You really understood the story!" 
+      : "Nice effort! Try reading the story again and you'll do even better next time!";
+  }
+}
+
 // Math helper powered by Gemini
 export async function generateMathHelp(
   problem: string,

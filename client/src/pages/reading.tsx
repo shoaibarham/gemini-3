@@ -18,7 +18,11 @@ import {
   X,
   Trash2,
   MousePointer2,
-  Sparkles
+  Sparkles,
+  CheckCircle2,
+  XCircle,
+  Trophy,
+  RefreshCcw
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -100,6 +104,20 @@ The End.`,
   const [chatInput, setChatInput] = useState("");
   const [isDefining, setIsDefining] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  
+  // Quiz state
+  const [showQuiz, setShowQuiz] = useState(false);
+  const [quizQuestions, setQuizQuestions] = useState<Array<{ id: string; question: string; options: string[] }>>([]);
+  const [quizId, setQuizId] = useState<string | null>(null);
+  const [selectedAnswers, setSelectedAnswers] = useState<Record<number, number>>({});
+  const [quizResult, setQuizResult] = useState<{
+    score: number;
+    totalQuestions: number;
+    passed: boolean;
+    feedback: string;
+    correctAnswers: number[];
+  } | null>(null);
+  const [quizSubmitted, setQuizSubmitted] = useState(false);
 
   const saveReadingProgress = useMutation({
     mutationFn: async (data: { wordsRead: number; currentPosition: number; completed: boolean }) => {
@@ -148,6 +166,40 @@ The End.`,
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [`/api/chat/${userId}/${storyId}`] });
+    },
+  });
+
+  const generateQuiz = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", `/api/quiz/generate/${storyId}`, { userId });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      if (data.questions && data.questions.length > 0 && data.quizId) {
+        setQuizQuestions(data.questions);
+        setQuizId(data.quizId);
+        setSelectedAnswers({});
+        setQuizResult(null);
+        setQuizSubmitted(false);
+      } else {
+        console.error("Invalid quiz data received:", data);
+      }
+    },
+    onError: (error) => {
+      console.error("Quiz generation failed:", error);
+    },
+  });
+
+  const submitQuiz = useMutation({
+    mutationFn: async () => {
+      const answers = quizQuestions.map((_, i) => selectedAnswers[i] ?? -1);
+      const response = await apiRequest("POST", `/api/quiz/${quizId}/submit`, { answers });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      setQuizResult(data);
+      setQuizSubmitted(true);
+      queryClient.invalidateQueries({ queryKey: [`/api/quiz/user/${userId}`] });
     },
   });
 
@@ -255,6 +307,31 @@ The End.`,
       handleSendMessage();
     }
   };
+
+  const handleStartQuiz = () => {
+    setShowQuiz(true);
+    generateQuiz.mutate();
+  };
+
+  const handleSelectAnswer = (questionIndex: number, answerIndex: number) => {
+    if (quizSubmitted) return;
+    setSelectedAnswers((prev) => ({ ...prev, [questionIndex]: answerIndex }));
+  };
+
+  const handleSubmitQuiz = () => {
+    if (!quizId || quizQuestions.length === 0) return;
+    if (Object.keys(selectedAnswers).length < quizQuestions.length) return;
+    submitQuiz.mutate();
+  };
+
+  const handleRetryQuiz = () => {
+    setQuizResult(null);
+    setQuizSubmitted(false);
+    setSelectedAnswers({});
+    generateQuiz.mutate();
+  };
+
+  const isStoryComplete = progress >= 90;
 
   const handleWordClick = (word: string, index: number) => {
     const cleanWord = word.replace(/[^a-zA-Z'-]/g, "");
@@ -502,6 +579,188 @@ The End.`,
                 </div>
               </CardContent>
             </Card>
+
+            {/* Quiz Section */}
+            {isStoryComplete && !showQuiz && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+              >
+                <Card className="border-2 border-primary/30 bg-primary/5">
+                  <CardContent className="p-6 text-center">
+                    <Trophy className="h-12 w-12 mx-auto mb-4 text-amber-500" />
+                    <h3 className="font-child text-xl font-bold mb-2">Great job reading!</h3>
+                    <p className="text-muted-foreground mb-4">
+                      You've read most of the story. Ready to test what you learned?
+                    </p>
+                    <Button
+                      size="lg"
+                      onClick={handleStartQuiz}
+                      className="gap-2"
+                      data-testid="button-start-quiz"
+                    >
+                      <Sparkles className="h-5 w-5" />
+                      Take the Quiz
+                    </Button>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )}
+
+            {showQuiz && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+              >
+                <Card>
+                  <CardHeader className="pb-4">
+                    <CardTitle className="font-child flex items-center gap-2">
+                      <Sparkles className="h-5 w-5 text-primary" />
+                      Reading Comprehension Quiz
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    {generateQuiz.isPending ? (
+                      <div className="flex flex-col items-center justify-center py-8">
+                        <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+                        <p className="font-child text-muted-foreground">Creating quiz questions...</p>
+                      </div>
+                    ) : generateQuiz.isError || (quizQuestions.length === 0 && !generateQuiz.isPending) ? (
+                      <div className="flex flex-col items-center justify-center py-8">
+                        <XCircle className="h-12 w-12 text-amber-500 mb-4" />
+                        <p className="font-child font-medium mb-2">Oops! Couldn't create the quiz right now.</p>
+                        <p className="text-muted-foreground text-sm mb-4">Let's try again in a moment!</p>
+                        <Button onClick={() => generateQuiz.mutate()} className="gap-2" data-testid="button-retry-generate">
+                          <RefreshCcw className="h-4 w-4" />
+                          Try Again
+                        </Button>
+                      </div>
+                    ) : quizResult ? (
+                      <div className="space-y-6">
+                        <div className={`text-center p-6 rounded-xl ${quizResult.passed ? "bg-emerald-500/10" : "bg-amber-500/10"}`}>
+                          {quizResult.passed ? (
+                            <CheckCircle2 className="h-16 w-16 mx-auto mb-4 text-emerald-500" />
+                          ) : (
+                            <RefreshCcw className="h-16 w-16 mx-auto mb-4 text-amber-500" />
+                          )}
+                          <h3 className="font-child text-2xl font-bold mb-2">
+                            {quizResult.passed ? "Excellent Work!" : "Nice Try!"}
+                          </h3>
+                          <p className="text-3xl font-bold mb-4" data-testid="text-quiz-score">
+                            {quizResult.score} / {quizResult.totalQuestions}
+                          </p>
+                          <p className="text-muted-foreground font-child" data-testid="text-quiz-feedback">
+                            {quizResult.feedback}
+                          </p>
+                        </div>
+
+                        {/* Show correct/incorrect answers */}
+                        <div className="space-y-4">
+                          {quizQuestions.map((q, qIdx) => {
+                            const userAnswer = selectedAnswers[qIdx];
+                            const isCorrect = userAnswer === quizResult.correctAnswers[qIdx];
+                            return (
+                              <div key={q.id} className="p-4 rounded-lg bg-muted/50">
+                                <p className="font-child font-medium mb-2 flex items-center gap-2">
+                                  {isCorrect ? (
+                                    <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                                  ) : (
+                                    <XCircle className="h-4 w-4 text-red-500" />
+                                  )}
+                                  {q.question}
+                                </p>
+                                <p className="text-sm">
+                                  <span className="text-muted-foreground">Your answer: </span>
+                                  <span className={isCorrect ? "text-emerald-600" : "text-red-600"}>
+                                    {q.options[userAnswer]}
+                                  </span>
+                                </p>
+                                {!isCorrect && (
+                                  <p className="text-sm">
+                                    <span className="text-muted-foreground">Correct answer: </span>
+                                    <span className="text-emerald-600">
+                                      {q.options[quizResult.correctAnswers[qIdx]]}
+                                    </span>
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div className="flex justify-center gap-4">
+                          {!quizResult.passed && (
+                            <Button
+                              variant="outline"
+                              onClick={handleRetryQuiz}
+                              className="gap-2"
+                              data-testid="button-retry-quiz"
+                            >
+                              <RefreshCcw className="h-4 w-4" />
+                              Try Again
+                            </Button>
+                          )}
+                          <Button
+                            onClick={() => setShowQuiz(false)}
+                            className="gap-2"
+                            data-testid="button-close-quiz"
+                          >
+                            <CheckCircle2 className="h-4 w-4" />
+                            Done
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-6">
+                        {quizQuestions.map((q, qIdx) => (
+                          <div key={q.id} className="space-y-3" data-testid={`quiz-question-${qIdx}`}>
+                            <p className="font-child font-medium">
+                              {qIdx + 1}. {q.question}
+                            </p>
+                            <div className="grid gap-2">
+                              {q.options.map((option, optIdx) => (
+                                <Button
+                                  key={optIdx}
+                                  variant={selectedAnswers[qIdx] === optIdx ? "default" : "outline"}
+                                  className="justify-start text-left h-auto py-3 font-child"
+                                  onClick={() => handleSelectAnswer(qIdx, optIdx)}
+                                  data-testid={`quiz-option-${qIdx}-${optIdx}`}
+                                >
+                                  <span className="w-6 h-6 rounded-full border flex items-center justify-center mr-3 text-xs font-bold shrink-0">
+                                    {String.fromCharCode(65 + optIdx)}
+                                  </span>
+                                  {option}
+                                </Button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+
+                        <Button
+                          size="lg"
+                          className="w-full gap-2"
+                          disabled={Object.keys(selectedAnswers).length < quizQuestions.length || submitQuiz.isPending}
+                          onClick={handleSubmitQuiz}
+                          data-testid="button-submit-quiz"
+                        >
+                          {submitQuiz.isPending ? (
+                            <>
+                              <Loader2 className="h-5 w-5 animate-spin" />
+                              Checking answers...
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle2 className="h-5 w-5" />
+                              Submit Answers
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )}
 
             <div className="flex justify-center gap-4 pb-20">
               <Link href="/child">

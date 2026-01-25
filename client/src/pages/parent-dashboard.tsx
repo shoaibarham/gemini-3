@@ -15,7 +15,10 @@ import {
   Settings,
   Sparkles,
   Activity,
-  Loader2
+  Loader2,
+  CheckCircle2,
+  XCircle,
+  Trophy
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -59,6 +62,16 @@ interface DashboardResponse {
   }>;
 }
 
+interface QuizResult {
+  quizId: string;
+  storyId: string;
+  storyTitle: string;
+  score: number;
+  totalQuestions: number;
+  passed: boolean;
+  completedAt: string;
+}
+
 const weeklyData = [
   { day: "Mon", reading: 15, math: 12 },
   { day: "Tue", reading: 20, math: 15 },
@@ -75,6 +88,18 @@ export default function ParentDashboard() {
   const { data, isLoading } = useQuery<DashboardResponse>({
     queryKey: ["/api/dashboard/user-1"],
   });
+
+  const { data: quizResults = [] } = useQuery<QuizResult[]>({
+    queryKey: ["/api/quiz/user/user-1"],
+  });
+
+  const quizStats = {
+    totalQuizzes: quizResults.length,
+    passedQuizzes: quizResults.filter(q => q.passed).length,
+    averageScore: quizResults.length > 0 
+      ? Math.round(quizResults.reduce((acc, q) => acc + (q.score / q.totalQuestions) * 100, 0) / quizResults.length)
+      : 0,
+  };
 
   const stats = data?.stats || {
     totalReadingTime: 122,
@@ -396,24 +421,92 @@ export default function ParentDashboard() {
 
                   <Card>
                     <CardContent className="p-6 flex flex-col items-center text-center">
-                      <div className="flex h-24 w-24 items-center justify-center rounded-full bg-emerald-500/10">
-                        <span className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">Lv.3</span>
-                      </div>
-                      <p className="mt-4 font-medium">Reading Level</p>
-                      <p className="text-sm text-muted-foreground">Grade 3 equivalent</p>
+                      <ProgressRing progress={quizStats.averageScore} size={120} strokeWidth={10} color="stroke-purple-500">
+                        <div className="text-center">
+                          <span className="text-2xl font-bold">{quizStats.averageScore}%</span>
+                          <p className="text-xs text-muted-foreground">Quiz Score</p>
+                        </div>
+                      </ProgressRing>
+                      <p className="mt-4 font-medium">Comprehension Score</p>
+                      <p className="text-sm text-muted-foreground">Average quiz performance</p>
                     </CardContent>
                   </Card>
 
                   <Card>
                     <CardContent className="p-6 flex flex-col items-center text-center">
                       <div className="flex h-24 w-24 items-center justify-center rounded-full bg-emerald-500/10">
-                        <span className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">8</span>
+                        <span className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">{quizStats.passedQuizzes}/{quizStats.totalQuizzes}</span>
                       </div>
-                      <p className="mt-4 font-medium">Stories Completed</p>
-                      <p className="text-sm text-muted-foreground">This month</p>
+                      <p className="mt-4 font-medium">Quizzes Passed</p>
+                      <p className="text-sm text-muted-foreground">Comprehension tests</p>
                     </CardContent>
                   </Card>
                 </div>
+
+                {quizResults.length > 0 && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <Trophy className="h-5 w-5 text-amber-500" />
+                        Reading Comprehension Quizzes
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-3">
+                        {quizResults.map((quiz) => (
+                          <div 
+                            key={quiz.quizId}
+                            className="flex items-center justify-between rounded-xl bg-muted/50 p-4"
+                            data-testid={`quiz-result-${quiz.quizId}`}
+                          >
+                            <div className="flex items-center gap-4">
+                              <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${
+                                quiz.passed ? "bg-emerald-500/10" : "bg-amber-500/10"
+                              }`}>
+                                {quiz.passed ? (
+                                  <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                                ) : (
+                                  <XCircle className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+                                )}
+                              </div>
+                              <div>
+                                <p className="font-medium">{quiz.storyTitle}</p>
+                                <p className="text-sm text-muted-foreground">
+                                  {new Date(quiz.completedAt).toLocaleDateString()}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-4">
+                              <div className="text-right">
+                                <p className="font-bold" data-testid={`quiz-score-${quiz.quizId}`}>
+                                  {quiz.score}/{quiz.totalQuestions}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {Math.round((quiz.score / quiz.totalQuestions) * 100)}%
+                                </p>
+                              </div>
+                              <Badge variant={quiz.passed ? "default" : "secondary"}>
+                                {quiz.passed ? "Passed" : "Needs Review"}
+                              </Badge>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {quizResults.length === 0 && (
+                  <Card className="border-dashed">
+                    <CardContent className="p-6 text-center">
+                      <Trophy className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
+                      <p className="font-medium">No Quiz Results Yet</p>
+                      <p className="text-sm text-muted-foreground">
+                        Quizzes will appear here after your child completes reading stories.
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
               </TabsContent>
 
               <TabsContent value="math" className="space-y-6">

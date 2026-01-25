@@ -8,7 +8,7 @@ import {
   insertVibeStateSchema,
   insertChatMessageSchema
 } from "@shared/schema";
-import { generateChatResponse, generateMathHelp } from "./gemini";
+import { generateChatResponse, generateMathHelp, generateQuiz, evaluateQuizPerformance } from "./gemini";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -383,6 +383,155 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Math help error:", error);
       res.status(500).json({ error: "Failed to generate math help" });
+    }
+  });
+
+  // Quiz API - Generate quiz for a story
+  app.post("/api/quiz/generate/:storyId", async (req, res) => {
+    try {
+      const { storyId } = req.params;
+      const { userId } = req.body;
+
+      if (!userId || typeof userId !== "string") {
+        return res.status(400).json({ error: "User ID is required" });
+      }
+
+      const story = await storage.getStory(storyId);
+      if (!story) {
+        return res.status(404).json({ error: "Story not found" });
+      }
+
+      // Check if quiz already exists for this user/story
+      const existingQuiz = await storage.getQuizByStory(userId, storyId);
+      if (existingQuiz && !existingQuiz.completedAt) {
+        // Return existing incomplete quiz
+        const questions = JSON.parse(existingQuiz.questions);
+        return res.json({ 
+          quizId: existingQuiz.id, 
+          questions: questions.map((q: any, i: number) => ({
+            id: `q-${i}`,
+            question: q.question,
+            options: q.options
+          }))
+        });
+      }
+
+      // Generate new quiz questions
+      const questions = await generateQuiz(story.title, story.content, 3);
+      
+      // Store quiz
+      const quiz = await storage.createQuiz({
+        userId,
+        storyId,
+        questions: JSON.stringify(questions),
+        totalQuestions: questions.length,
+      });
+
+      res.status(201).json({
+        quizId: quiz.id,
+        questions: questions.map((q, i) => ({
+          id: `q-${i}`,
+          question: q.question,
+          options: q.options
+        }))
+      });
+    } catch (error) {
+      console.error("Quiz generation error:", error);
+      res.status(500).json({ error: "Failed to generate quiz" });
+    }
+  });
+
+  // Quiz API - Submit answers
+  app.post("/api/quiz/:quizId/submit", async (req, res) => {
+    try {
+      const { quizId } = req.params;
+      const { answers } = req.body;
+
+      if (!Array.isArray(answers)) {
+        return res.status(400).json({ error: "Answers must be an array" });
+      }
+
+      const quiz = await storage.getQuizzes("user-1").then(quizzes => 
+        quizzes.find(q => q.id === quizId)
+      );
+      
+      if (!quiz) {
+        return res.status(404).json({ error: "Quiz not found" });
+      }
+
+      const questions = JSON.parse(quiz.questions);
+      let score = 0;
+      const wrongQuestions: string[] = [];
+
+      answers.forEach((answer: number, index: number) => {
+        if (questions[index] && answer === questions[index].correctAnswer) {
+          score++;
+        } else if (questions[index]) {
+          wrongQuestions.push(questions[index].question);
+        }
+      });
+
+      const passed = score >= Math.ceil(quiz.totalQuestions * 0.7);
+      
+      // Get story for feedback
+      const story = await storage.getStory(quiz.storyId);
+      const storyTitle = story?.title || "the story";
+
+      // Get AI feedback
+      const feedback = await evaluateQuizPerformance(
+        storyTitle,
+        score,
+        quiz.totalQuestions,
+        wrongQuestions
+      );
+
+      // Update quiz with results
+      await storage.updateQuiz(quizId, {
+        answers: JSON.stringify(answers),
+        score,
+        passed,
+        completedAt: new Date(),
+      });
+
+      res.json({
+        score,
+        totalQuestions: quiz.totalQuestions,
+        passed,
+        feedback,
+        correctAnswers: questions.map((q: any) => q.correctAnswer)
+      });
+    } catch (error) {
+      console.error("Quiz submission error:", error);
+      res.status(500).json({ error: "Failed to submit quiz" });
+    }
+  });
+
+  // Quiz API - Get user's quiz history
+  app.get("/api/quiz/user/:userId", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const quizzes = await storage.getQuizzes(userId);
+      
+      // Get story titles for each quiz
+      const quizzesWithStories = await Promise.all(
+        quizzes.filter(q => q.completedAt).map(async (quiz) => {
+          const story = await storage.getStory(quiz.storyId);
+          return {
+            quizId: quiz.id,
+            storyId: quiz.storyId,
+            storyTitle: story?.title || "Unknown Story",
+            score: quiz.score,
+            totalQuestions: quiz.totalQuestions,
+            passed: quiz.passed,
+            completedAt: quiz.completedAt,
+          };
+        })
+      );
+
+      res.json(quizzesWithStories);
+    } catch (error) {
+      console.error("Quiz history error:", error);
+      res.status(500).json({ error: "Failed to fetch quiz history" });
     }
   });
 
