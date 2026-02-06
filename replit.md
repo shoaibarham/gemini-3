@@ -42,8 +42,8 @@ The server provides endpoints for:
 - AI Chat (Gemini-powered reading buddy)
 - AI Math Help (Gemini-powered feedback)
 
-### AI Integration (Gemini 2.5 Pro)
-- **Model**: gemini-2.5-pro for all AI features
+### AI Integration (Gemini 3 Pro Preview)
+- **Model**: gemini-3-pro-preview for all AI features
 - **Reading Buddy**: Agentic chatbot that helps children understand stories, explains vocabulary, and encourages reading comprehension
 - **Math Tutor**: Provides personalized feedback after each math problem, explaining mistakes kindly and celebrating successes
 - **Word Definitions**: Click any word in the reading interface to get a child-friendly AI explanation

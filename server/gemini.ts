@@ -2,7 +2,43 @@ import { GoogleGenAI } from "@google/genai";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
-const GEMINI_MODEL = "gemini-2.5-pro";
+const GEMINI_MODEL = "gemini-3-pro-preview";
+const FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"];
+
+async function callGeminiWithRetry(
+  params: { model: string; contents: string; config?: any },
+  maxRetries: number = 1
+): Promise<any> {
+  const modelsToTry = [params.model, ...FALLBACK_MODELS];
+  
+  for (const model of modelsToTry) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await ai.models.generateContent({ ...params, model });
+        if (model !== params.model) {
+          console.log(`Gemini: used fallback model ${model} (primary ${params.model} was rate limited)`);
+        }
+        return response;
+      } catch (error: any) {
+        if (error?.status === 429) {
+          if (attempt < maxRetries) {
+            const retryMatch = error?.message?.match(/retry in (\d+(?:\.\d+)?)s/i);
+            const waitTime = retryMatch ? Math.min(parseFloat(retryMatch[1]), 15) * 1000 : 5000;
+            console.log(`Gemini ${model} rate limited, waiting ${Math.round(waitTime / 1000)}s before retry...`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+          } else {
+            console.log(`Gemini ${model} quota exhausted, trying next model...`);
+            break;
+          }
+        } else {
+          throw error;
+        }
+      }
+    }
+  }
+  
+  throw new Error("All Gemini models exhausted their quotas");
+}
 
 // Enhanced agentic system prompt for Gemini
 const AGENTIC_READING_BUDDY_PROMPT = `You are an intelligent, proactive AI Reading Buddy designed to help children learn and enjoy reading. You operate in an "agentic" mode - meaning you should be:
@@ -109,7 +145,7 @@ AGENTIC RESPONSE GUIDELINES:
     agenticPrompt += `
 Respond as an enthusiastic, intelligent AI Reading Buddy:`;
 
-    const response = await ai.models.generateContent({
+    const response = await callGeminiWithRetry({
       model: GEMINI_MODEL,
       contents: agenticPrompt,
       config: {
@@ -151,7 +187,7 @@ Generate a brief (1 sentence) proactive suggestion or observation that:
 
 Keep it under 15 words and very child-friendly.`;
 
-    const response = await ai.models.generateContent({
+    const response = await callGeminiWithRetry({
       model: GEMINI_MODEL,
       contents: prompt,
       config: {
@@ -199,7 +235,7 @@ Return ONLY a valid JSON array in this exact format (no other text):
 
 Where correctAnswer is the index (0-3) of the correct option.`;
 
-    const response = await ai.models.generateContent({
+    const response = await callGeminiWithRetry({
       model: GEMINI_MODEL,
       contents: prompt,
       config: {
@@ -272,7 +308,7 @@ export async function evaluateQuizPerformance(
          - Encourages them that they can try again
          Be supportive and never make them feel bad!`;
 
-    const response = await ai.models.generateContent({
+    const response = await callGeminiWithRetry({
       model: GEMINI_MODEL,
       contents: prompt,
       config: {
@@ -313,7 +349,7 @@ export async function generateMathHelp(
          - Encourages them to try again
          Be supportive and never make them feel bad!`;
 
-    const response = await ai.models.generateContent({
+    const response = await callGeminiWithRetry({
       model: GEMINI_MODEL,
       contents: prompt,
       config: {
