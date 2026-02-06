@@ -44,7 +44,7 @@ async function callGeminiWithRetry(
 
   throw lastError || new Error("All Gemini models failed");
 }
-
+//updated prompts
 // Enhanced agentic system prompt for Gemini
 const AGENTIC_READING_BUDDY_PROMPT = `You are an intelligent, proactive AI Reading Buddy designed to help children learn and enjoy reading. You operate in an "agentic" mode - meaning you should be:
 
