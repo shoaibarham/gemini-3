@@ -2,42 +2,47 @@ import { GoogleGenAI } from "@google/genai";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
-const GEMINI_MODEL = "gemini-3-pro-preview";
-const FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"];
+const GEMINI_MODEL = "gemini-2.5-flash";
+const FALLBACK_MODELS = ["gemini-2.0-flash", "gemini-2.0-flash-lite"];
 
 async function callGeminiWithRetry(
   params: { model: string; contents: string; config?: any },
-  maxRetries: number = 1
+  maxRetries: number = 2
 ): Promise<any> {
   const modelsToTry = [params.model, ...FALLBACK_MODELS];
-  
+  let lastError: any = null;
+
   for (const model of modelsToTry) {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         const response = await ai.models.generateContent({ ...params, model });
         if (model !== params.model) {
-          console.log(`Gemini: used fallback model ${model} (primary ${params.model} was rate limited)`);
+          console.log(`Gemini: used fallback model ${model} (primary ${params.model} was unavailable)`);
         }
         return response;
       } catch (error: any) {
-        if (error?.status === 429) {
+        lastError = error;
+        const status = error?.status || error?.code;
+        console.log(`Gemini ${model} error (status ${status}, attempt ${attempt + 1}/${maxRetries + 1}): ${error?.message?.slice(0, 120) || "unknown"}`);
+
+        if (status === 429) {
           if (attempt < maxRetries) {
-            const retryMatch = error?.message?.match(/retry in (\d+(?:\.\d+)?)s/i);
-            const waitTime = retryMatch ? Math.min(parseFloat(retryMatch[1]), 15) * 1000 : 5000;
+            const waitTime = Math.min(3000 * (attempt + 1), 10000);
             console.log(`Gemini ${model} rate limited, waiting ${Math.round(waitTime / 1000)}s before retry...`);
             await new Promise(resolve => setTimeout(resolve, waitTime));
           } else {
-            console.log(`Gemini ${model} quota exhausted, trying next model...`);
+            console.log(`Gemini ${model} exhausted retries, trying next model...`);
             break;
           }
         } else {
-          throw error;
+          console.log(`Gemini ${model} error (${status}), trying next model...`);
+          break;
         }
       }
     }
   }
-  
-  throw new Error("All Gemini models exhausted their quotas");
+
+  throw lastError || new Error("All Gemini models failed");
 }
 
 // Enhanced agentic system prompt for Gemini
@@ -79,24 +84,24 @@ export async function generateChatResponse(
 ): Promise<string> {
   try {
     // Detect if this is a word definition request
-    const isWordDefinition = userMessage.toLowerCase().includes("what does") && 
-                             userMessage.toLowerCase().includes("mean");
-    
+    const isWordDefinition = userMessage.toLowerCase().includes("what does") &&
+      userMessage.toLowerCase().includes("mean");
+
     // Extract the word being asked about if it's a definition request
     const wordMatch = userMessage.match(/["']([^"']+)["']/);
     const targetWord = wordMatch ? wordMatch[1] : null;
 
     // Build context with reading position awareness
     const wordsArray = context.storyContent.split(/\s+/).filter(w => w.trim());
-    const readProgress = context.currentPosition 
+    const readProgress = context.currentPosition
       ? Math.round((context.currentPosition / wordsArray.length) * 100)
       : 0;
-    
-    const surroundingContext = context.currentPosition 
+
+    const surroundingContext = context.currentPosition
       ? wordsArray.slice(
-          Math.max(0, context.currentPosition - 15), 
-          Math.min(wordsArray.length, context.currentPosition + 15)
-        ).join(" ")
+        Math.max(0, context.currentPosition - 15),
+        Math.min(wordsArray.length, context.currentPosition + 15)
+      ).join(" ")
       : "";
 
     let agenticPrompt = `
@@ -111,9 +116,9 @@ The child has read approximately ${readProgress}% of the story${context.currentP
 ${surroundingContext ? `They are currently near this part: "...${surroundingContext}..."` : ""}
 
 CONVERSATION HISTORY:
-${conversationHistory.slice(-8).map(m => 
-  `${m.role === "user" ? "Child" : "AI Buddy"}: ${m.content}`
-).join("\n") || "This is the start of the conversation."}
+${conversationHistory.slice(-8).map(m =>
+      `${m.role === "user" ? "Child" : "AI Buddy"}: ${m.content}`
+    ).join("\n") || "This is the start of the conversation."}
 
 CURRENT REQUEST:
 Child: ${userMessage}
@@ -156,7 +161,7 @@ Respond as an enthusiastic, intelligent AI Reading Buddy:`;
     });
 
     const text = response.text;
-    
+
     if (!text) {
       return "Hmm, that's a great question! Can you tell me more about what part of the story made you curious?";
     }
@@ -245,7 +250,7 @@ Where correctAnswer is the index (0-3) of the correct option.`;
     });
 
     const text = response.text || "";
-    
+
     // Parse JSON from response
     const jsonMatch = text.match(/\[[\s\S]*\]/);
     if (jsonMatch) {
@@ -293,7 +298,7 @@ export async function evaluateQuizPerformance(
   try {
     const percentage = Math.round((score / totalQuestions) * 100);
     const passed = percentage >= 70;
-    
+
     const prompt = passed
       ? `A child just completed a quiz about "${storyTitle}" and scored ${score}/${totalQuestions} (${percentage}%).
          Generate a short (2 sentences) celebratory message that:
@@ -321,8 +326,8 @@ export async function evaluateQuizPerformance(
     return response.text || (passed ? "Great job on the quiz!" : "Good try! You can always try again.");
   } catch (error) {
     console.error("Gemini quiz evaluation error:", error);
-    return score >= Math.ceil(totalQuestions * 0.7) 
-      ? "Wonderful work on the quiz! You really understood the story!" 
+    return score >= Math.ceil(totalQuestions * 0.7)
+      ? "Wonderful work on the quiz! You really understood the story!"
       : "Nice effort! Try reading the story again and you'll do even better next time!";
   }
 }
