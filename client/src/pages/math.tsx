@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Link } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { useMutation } from "@tanstack/react-query";
@@ -13,7 +13,10 @@ import {
   Lightbulb,
   Clock,
   Sparkles,
-  Loader2
+  Loader2,
+  Play,
+  Eye,
+  SkipForward,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -68,8 +71,8 @@ const generateProblem = (level: number): MathProblem => {
 const operatorSymbols: Record<MathProblem["type"], string> = {
   addition: "+",
   subtraction: "-",
-  multiplication: "×",
-  division: "÷",
+  multiplication: "\u00d7",
+  division: "\u00f7",
 };
 
 export default function MathPage() {
@@ -86,6 +89,10 @@ export default function MathPage() {
   const [currentVibe, setCurrentVibe] = useState<VibeStateType>("focused");
   const [elapsedTime, setElapsedTime] = useState(0);
   const [aiFeedback, setAiFeedback] = useState<string | null>(null);
+  const [vizVideoUrl, setVizVideoUrl] = useState<string | null>(null);
+  const [showVisualization, setShowVisualization] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const advanceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const saveMathProgress = useMutation({
     mutationFn: async (data: { problemsAttempted: number; problemsCorrect: number; currentLevel: number; streak: number }) => {
@@ -117,6 +124,23 @@ export default function MathPage() {
     },
   });
 
+  const getVisualization = useMutation({
+    mutationFn: async (data: { type: string; operand1: number; operand2: number; answer: number; style?: string }) => {
+      const response = await apiRequest("POST", "/api/math-visualization", data);
+      return response.json();
+    },
+    onSuccess: (data) => {
+      if (data.videoUrl) {
+        setVizVideoUrl(data.videoUrl);
+        setShowVisualization(true);
+        if (advanceTimeoutRef.current) {
+          clearTimeout(advanceTimeoutRef.current);
+          advanceTimeoutRef.current = null;
+        }
+      }
+    },
+  });
+
   useEffect(() => {
     const interval = setInterval(() => {
       setElapsedTime((prev) => prev + 1);
@@ -135,6 +159,14 @@ export default function MathPage() {
       setCurrentVibe("focused");
     }
   }, [streak, problemsCompleted, correctAnswers]);
+
+  useEffect(() => {
+    return () => {
+      if (advanceTimeoutRef.current) {
+        clearTimeout(advanceTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -158,6 +190,20 @@ export default function MathPage() {
     setUserInput(userInput.slice(0, -1));
   };
 
+  const advanceToNextProblem = useCallback(() => {
+    if (advanceTimeoutRef.current) {
+      clearTimeout(advanceTimeoutRef.current);
+      advanceTimeoutRef.current = null;
+    }
+    setShowResult(null);
+    setUserInput("");
+    setShowHint(false);
+    setAiFeedback(null);
+    setVizVideoUrl(null);
+    setShowVisualization(false);
+    setCurrentProblem(generateProblem(level));
+  }, [level]);
+
   const handleSubmit = () => {
     if (!userInput || showResult) return;
     
@@ -166,6 +212,8 @@ export default function MathPage() {
     
     setShowResult(isCorrect ? "correct" : "incorrect");
     setAiFeedback(null);
+    setVizVideoUrl(null);
+    setShowVisualization(false);
     const newProblemsCompleted = problemsCompleted + 1;
     setProblemsCompleted(newProblemsCompleted);
     
@@ -173,7 +221,6 @@ export default function MathPage() {
     let newStreak = streak;
     let newLevel = level;
 
-    // Get AI feedback
     const problemStr = `${currentProblem.operand1} ${operatorSymbols[currentProblem.type]} ${currentProblem.operand2}`;
     getMathHelp.mutate({
       problem: problemStr,
@@ -203,6 +250,13 @@ export default function MathPage() {
     } else {
       setStreak(0);
       newStreak = 0;
+
+      getVisualization.mutate({
+        type: currentProblem.type,
+        operand1: currentProblem.operand1,
+        operand2: currentProblem.operand2,
+        answer: currentProblem.answer,
+      });
     }
 
     saveMathProgress.mutate({
@@ -212,14 +266,21 @@ export default function MathPage() {
       streak: newStreak,
     });
     
-    // Longer timeout to allow reading AI feedback
-    setTimeout(() => {
-      setShowResult(null);
-      setUserInput("");
-      setShowHint(false);
-      setAiFeedback(null);
-      setCurrentProblem(generateProblem(level));
-    }, 3500);
+    if (isCorrect) {
+      advanceTimeoutRef.current = setTimeout(() => {
+        advanceToNextProblem();
+      }, 3500);
+    }
+  };
+
+  const handleShowMeHow = () => {
+    if (getVisualization.isPending) return;
+    getVisualization.mutate({
+      type: currentProblem.type,
+      operand1: currentProblem.operand1,
+      operand2: currentProblem.operand2,
+      answer: currentProblem.answer,
+    });
   };
 
   const getHint = () => {
@@ -236,6 +297,13 @@ export default function MathPage() {
       default:
         return "Take your time!";
     }
+  };
+
+  const vizDescriptions: Record<string, string> = {
+    addition: "Watch the dots come together!",
+    subtraction: "See how we take some away!",
+    multiplication: "Look at the groups!",
+    division: "Watch how we split them up!",
   };
 
   return (
@@ -300,7 +368,7 @@ export default function MathPage() {
             </Card>
           </div>
 
-          <Card className="overflow-hidden">
+          <Card>
             <CardContent className="p-8">
               <AnimatePresence mode="wait">
                 <motion.div
@@ -310,7 +378,7 @@ export default function MathPage() {
                   exit={{ opacity: 0, scale: 0.9 }}
                   className="text-center space-y-6"
                 >
-                  <div className="flex items-center justify-center gap-4">
+                  <div className="flex items-center justify-center gap-4 flex-wrap">
                     <motion.span 
                       className="font-child text-5xl font-bold"
                       initial={{ x: -20 }}
@@ -374,7 +442,6 @@ export default function MathPage() {
                           )}
                         </div>
                         
-                        {/* AI Feedback */}
                         <motion.div
                           initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
@@ -418,6 +485,129 @@ export default function MathPage() {
               </AnimatePresence>
             </CardContent>
           </Card>
+
+          <AnimatePresence>
+            {(showVisualization || getVisualization.isPending) && (
+              <motion.div
+                initial={{ opacity: 0, y: 20, height: 0 }}
+                animate={{ opacity: 1, y: 0, height: "auto" }}
+                exit={{ opacity: 0, y: -10, height: 0 }}
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              >
+                <Card className="border-2 border-purple-500/30 bg-gradient-to-b from-purple-500/5 to-transparent">
+                  <CardContent className="p-5">
+                    <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center justify-center w-8 h-8 rounded-md bg-purple-500/15">
+                          <Play className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+                        </div>
+                        <div>
+                          <h3 className="font-child text-sm font-bold text-purple-600 dark:text-purple-400" data-testid="text-viz-title">
+                            Visual Explanation
+                          </h3>
+                          <p className="text-xs text-muted-foreground" data-testid="text-viz-description">
+                            {vizDescriptions[currentProblem.type] || "Watch and learn!"}
+                          </p>
+                        </div>
+                      </div>
+                      {showVisualization && showResult === "incorrect" && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="gap-1 text-xs"
+                          onClick={advanceToNextProblem}
+                          data-testid="button-next-problem"
+                        >
+                          <SkipForward className="h-3 w-3" />
+                          Next
+                        </Button>
+                      )}
+                    </div>
+                    
+                    {getVisualization.isPending && !vizVideoUrl ? (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="flex flex-col items-center justify-center py-12 gap-4"
+                        data-testid="viz-loading"
+                      >
+                        <div className="relative">
+                          <div className="w-16 h-16 rounded-full border-4 border-purple-500/20 border-t-purple-500 animate-spin" />
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <Sparkles className="h-6 w-6 text-purple-500 animate-pulse" />
+                          </div>
+                        </div>
+                        <div className="text-center">
+                          <p className="font-child text-sm font-medium text-purple-600 dark:text-purple-400">
+                            Creating your animation...
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            This may take a few seconds
+                          </p>
+                        </div>
+                      </motion.div>
+                    ) : vizVideoUrl ? (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ delay: 0.1 }}
+                        className="relative rounded-lg overflow-hidden bg-[#1a1b26]"
+                        data-testid="viz-video-container"
+                      >
+                        <video
+                          ref={videoRef}
+                          src={vizVideoUrl}
+                          autoPlay
+                          controls
+                          playsInline
+                          className="w-full rounded-lg"
+                          style={{ aspectRatio: "16/9" }}
+                          data-testid="viz-video"
+                          onEnded={() => {
+                            if (showResult === "incorrect") {
+                              advanceTimeoutRef.current = setTimeout(() => {
+                                advanceToNextProblem();
+                              }, 2000);
+                            }
+                          }}
+                        />
+                      </motion.div>
+                    ) : getVisualization.isError ? (
+                      <div className="text-center py-8" data-testid="viz-error">
+                        <p className="text-sm text-muted-foreground">
+                          Could not create the animation right now.
+                        </p>
+                        <div className="flex items-center justify-center gap-2 mt-3">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-2"
+                            onClick={handleShowMeHow}
+                            data-testid="button-viz-retry"
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            Retry
+                          </Button>
+                          {showResult === "incorrect" && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="gap-2"
+                              onClick={advanceToNextProblem}
+                              data-testid="button-next-after-error"
+                            >
+                              <SkipForward className="h-3 w-3" />
+                              Next Problem
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <Card>
             <CardContent className="p-6">
@@ -473,6 +663,16 @@ export default function MathPage() {
                 >
                   <Lightbulb className="h-4 w-4" />
                   Hint
+                </Button>
+                <Button
+                  variant="outline"
+                  className="flex-1 gap-2"
+                  onClick={handleShowMeHow}
+                  disabled={getVisualization.isPending || showVisualization || showResult !== null}
+                  data-testid="button-show-me-how"
+                >
+                  <Eye className="h-4 w-4" />
+                  Show Me
                 </Button>
                 <Button
                   className="flex-1 gap-2"

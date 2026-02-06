@@ -11,6 +11,13 @@ import {
 import { generateChatResponse, generateMathHelp, generateQuiz, evaluateQuizPerformance } from "./gemini";
 import multer from "multer";
 import { PDFParse } from "pdf-parse";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import path from "path";
+import fs from "fs";
+import express from "express";
+
+const execFileAsync = promisify(execFile);
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -630,6 +637,90 @@ export async function registerRoutes(
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to delete story" });
+    }
+  });
+
+  // Serve manim-cache static files
+  const manimCacheDir = path.resolve(process.cwd(), "public", "manim-cache");
+  if (!fs.existsSync(manimCacheDir)) {
+    fs.mkdirSync(manimCacheDir, { recursive: true });
+  }
+  app.use("/manim-cache", express.static(manimCacheDir));
+
+  // Math Visualization API - Generate Manim animation
+  app.post("/api/math-visualization", async (req, res) => {
+    try {
+      const { type, operand1, operand2, answer, style } = req.body;
+
+      if (!type || operand1 === undefined || operand2 === undefined || answer === undefined) {
+        return res.status(400).json({ error: "Missing required fields: type, operand1, operand2, answer" });
+      }
+
+      const validTypes = ["addition", "subtraction", "multiplication", "division"];
+      if (!validTypes.includes(type)) {
+        return res.status(400).json({ error: `Invalid type. Must be one of: ${validTypes.join(", ")}` });
+      }
+
+      if (typeof operand1 !== "number" || typeof operand2 !== "number" || typeof answer !== "number") {
+        return res.status(400).json({ error: "operand1, operand2, and answer must be numbers" });
+      }
+
+      const validStyles = ["default", "numberline"];
+      const sanitizedStyle = validStyles.includes(style) ? style : "default";
+
+      const safeOp1 = Math.max(0, Math.min(1000, Math.abs(Math.floor(operand1))));
+      const safeOp2 = Math.max(0, Math.min(1000, Math.abs(Math.floor(operand2))));
+      const safeAnswer = Math.max(-1000, Math.min(10000, Math.floor(answer)));
+
+      const problemData = JSON.stringify({
+        type,
+        operand1: safeOp1,
+        operand2: safeOp2,
+        answer: safeAnswer,
+        style: sanitizedStyle,
+      });
+
+      const scriptPath = path.resolve(process.cwd(), "server", "manim", "render.py");
+
+      const { stdout, stderr } = await execFileAsync(
+        "python3",
+        [scriptPath, problemData],
+        { timeout: 90000, cwd: process.cwd() }
+      );
+
+      if (stderr) {
+        console.warn("Manim stderr:", stderr.slice(0, 500));
+      }
+
+      const trimmed = stdout.trim();
+      if (!trimmed) {
+        console.error("Manim render produced no output");
+        return res.status(500).json({ error: "Failed to generate visualization" });
+      }
+
+      const lines = trimmed.split("\n");
+      const lastLine = lines[lines.length - 1];
+
+      let result;
+      try {
+        result = JSON.parse(lastLine);
+      } catch {
+        console.error("Failed to parse Manim output:", lastLine.slice(0, 200));
+        return res.status(500).json({ error: "Failed to generate visualization" });
+      }
+
+      if (result.error) {
+        console.error("Manim render error:", result.error);
+        return res.status(500).json({ error: "Failed to generate visualization" });
+      }
+
+      res.json(result);
+    } catch (error: any) {
+      console.error("Math visualization error:", error.message);
+      if (error.killed) {
+        return res.status(504).json({ error: "Visualization rendering timed out" });
+      }
+      res.status(500).json({ error: "Failed to generate visualization" });
     }
   });
 

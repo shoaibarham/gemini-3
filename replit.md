@@ -44,12 +44,30 @@ The server provides endpoints for:
 
 ### AI Integration (Gemini 3 Pro Preview)
 - **Model**: gemini-3-pro-preview for all AI features
+- **Fallback Chain**: gemini-3-pro-preview -> gemini-2.5-flash -> gemini-2.0-flash (auto-fallback on rate limits)
 - **Reading Buddy**: Agentic chatbot that helps children understand stories, explains vocabulary, and encourages reading comprehension
 - **Math Tutor**: Provides personalized feedback after each math problem, explaining mistakes kindly and celebrating successes
 - **Word Definitions**: Click any word in the reading interface to get a child-friendly AI explanation
 - **Quiz Generation**: AI generates comprehension questions based on story/section content
 - **Quiz Evaluation**: AI provides personalized feedback on quiz performance
 - **Location**: `server/gemini.ts` contains all Gemini integration code
+
+### Manim Math Visualizations
+- **Library**: Manim Community Edition 0.19.2 (Python mathematical animation library)
+- **Purpose**: Creates animated visual explanations for math problems (addition, subtraction, multiplication, division)
+- **Architecture**: Backend Python script execution -> MP4 generation -> static file serving -> frontend video player
+- **Scene Types**:
+  - AdditionScene: Dots combining together with labels and counting
+  - SubtractionScene: Dots appearing then being crossed out and removed
+  - MultiplicationScene: Colored groups of dots with borders showing groups
+  - DivisionScene: Total dots splitting into equal groups
+  - NumberLineScene: Animated jumps along a number line (for addition/subtraction)
+- **Caching**: Hash-based filenames (MD5 of type+operands+style) stored in `public/manim-cache/`
+- **API Endpoint**: `POST /api/math-visualization` with `{type, operand1, operand2, answer, style?}`
+- **Frontend Integration**: "Show Me" button + auto-trigger on incorrect answers with video player
+- **Render Time**: ~10-20 seconds per animation (cached results return instantly)
+- **Script Location**: `server/manim/render.py` contains all Manim scene classes and rendering logic
+- **Static Serving**: `/manim-cache/*` serves generated MP4 files via Express static middleware
 
 ### PDF Upload & Section-Based Reading
 - Users can upload PDF files (up to 10MB) via the reading library page
