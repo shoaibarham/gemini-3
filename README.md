@@ -141,6 +141,4 @@ The app comes with seed data for quick testing:
 | alex | password | Child |
 | parent | password | Parent |
 
-## License
 
-MIT
