@@ -9,6 +9,65 @@ import {
   insertChatMessageSchema
 } from "@shared/schema";
 import { generateChatResponse, generateMathHelp, generateQuiz, evaluateQuizPerformance } from "./gemini";
+import multer from "multer";
+import { PDFParse } from "pdf-parse";
+
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype === "application/pdf") {
+      cb(null, true);
+    } else {
+      cb(new Error("Only PDF files are allowed"));
+    }
+  }
+});
+
+function splitIntoSections(text: string, targetWordsPerSection: number = 300): Array<{ title: string; content: string; wordCount: number }> {
+  const paragraphs = text.split(/\n\s*\n/).filter(p => p.trim().length > 0);
+  const sections: Array<{ title: string; content: string; wordCount: number }> = [];
+  let currentContent = "";
+  let currentWordCount = 0;
+  let sectionIndex = 1;
+
+  for (const paragraph of paragraphs) {
+    const trimmed = paragraph.trim();
+    const words = trimmed.split(/\s+/).filter(w => w.length > 0);
+    
+    if (currentWordCount + words.length > targetWordsPerSection && currentContent.trim().length > 0) {
+      sections.push({
+        title: `Section ${sectionIndex}`,
+        content: currentContent.trim(),
+        wordCount: currentWordCount,
+      });
+      sectionIndex++;
+      currentContent = trimmed;
+      currentWordCount = words.length;
+    } else {
+      currentContent += (currentContent ? "\n\n" : "") + trimmed;
+      currentWordCount += words.length;
+    }
+  }
+
+  if (currentContent.trim().length > 0) {
+    sections.push({
+      title: `Section ${sectionIndex}`,
+      content: currentContent.trim(),
+      wordCount: currentWordCount,
+    });
+  }
+
+  if (sections.length === 0) {
+    sections.push({
+      title: "Section 1",
+      content: text.trim(),
+      wordCount: text.trim().split(/\s+/).length,
+    });
+  }
+
+  return sections;
+}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -386,11 +445,11 @@ export async function registerRoutes(
     }
   });
 
-  // Quiz API - Generate quiz for a story
+  // Quiz API - Generate quiz for a story (supports section-based quizzes)
   app.post("/api/quiz/generate/:storyId", async (req, res) => {
     try {
       const { storyId } = req.params;
-      const { userId } = req.body;
+      const { userId, sectionIndex, sectionContent: clientSectionContent } = req.body;
 
       if (!userId || typeof userId !== "string") {
         return res.status(400).json({ error: "User ID is required" });
@@ -401,25 +460,22 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Story not found" });
       }
 
-      // Check if quiz already exists for this user/story
-      const existingQuiz = await storage.getQuizByStory(userId, storyId);
-      if (existingQuiz && !existingQuiz.completedAt) {
-        // Return existing incomplete quiz
-        const questions = JSON.parse(existingQuiz.questions);
-        return res.json({ 
-          quizId: existingQuiz.id, 
-          questions: questions.map((q: any, i: number) => ({
-            id: `q-${i}`,
-            question: q.question,
-            options: q.options
-          }))
-        });
+      let quizContent = story.content;
+      let quizTitle = story.title;
+
+      if (sectionIndex !== undefined && story.sections) {
+        const sections = JSON.parse(story.sections);
+        const section = sections[sectionIndex];
+        if (section) {
+          quizContent = section.content;
+          quizTitle = `${story.title} - ${section.title}`;
+        }
+      } else if (clientSectionContent && typeof clientSectionContent === "string") {
+        quizContent = clientSectionContent;
       }
 
-      // Generate new quiz questions
-      const questions = await generateQuiz(story.title, story.content, 3);
+      const questions = await generateQuiz(quizTitle, quizContent, 3);
       
-      // Store quiz
       const quiz = await storage.createQuiz({
         userId,
         storyId,
@@ -503,6 +559,77 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Quiz submission error:", error);
       res.status(500).json({ error: "Failed to submit quiz" });
+    }
+  });
+
+  // PDF Upload API
+  app.post("/api/upload-pdf", upload.single("pdf"), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No PDF file uploaded" });
+      }
+
+      const userId = req.body.userId || "user-1";
+
+      const parser = new PDFParse({ data: req.file.buffer });
+      const textResult = await parser.getText();
+      const text = textResult.text;
+      await parser.destroy();
+
+      if (!text || text.trim().length < 50) {
+        return res.status(400).json({ error: "Could not extract enough text from the PDF. The file might be scanned or image-based." });
+      }
+
+      const fileName = req.file.originalname.replace(/\.pdf$/i, "");
+      const sections = splitIntoSections(text, 300);
+      const totalWords = sections.reduce((acc, s) => acc + s.wordCount, 0);
+
+      const story = await storage.createStory({
+        title: fileName,
+        content: text,
+        difficulty: 1,
+        wordCount: totalWords,
+        sourceType: "pdf",
+        sections: JSON.stringify(sections),
+        fileName: req.file.originalname,
+        uploadedBy: userId,
+      });
+
+      res.status(201).json({
+        story: {
+          id: story.id,
+          title: story.title,
+          wordCount: totalWords,
+          sectionCount: sections.length,
+          fileName: story.fileName,
+          sourceType: story.sourceType,
+        },
+        sections: sections.map((s, i) => ({
+          index: i,
+          title: s.title,
+          wordCount: s.wordCount,
+        })),
+      });
+    } catch (error: any) {
+      console.error("PDF upload error:", error);
+      if (error.message === "Only PDF files are allowed") {
+        return res.status(400).json({ error: error.message });
+      }
+      res.status(500).json({ error: "Failed to process PDF file" });
+    }
+  });
+
+  // Delete a story (uploaded PDFs)
+  app.delete("/api/stories/:id", async (req, res) => {
+    try {
+      const story = await storage.getStory(req.params.id);
+      if (!story) {
+        return res.status(404).json({ error: "Story not found" });
+      }
+      await storage.deleteStory(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete story" });
     }
   });
 

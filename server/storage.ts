@@ -37,6 +37,7 @@ export interface IStorage {
   getStories(): Promise<Story[]>;
   getStory(id: string): Promise<Story | undefined>;
   createStory(story: InsertStory): Promise<Story>;
+  deleteStory(id: string): Promise<void>;
 
   getChatMessages(userId: string, storyId: string): Promise<ChatMessage[]>;
   createChatMessage(message: InsertChatMessage): Promise<ChatMessage>;
@@ -134,6 +135,10 @@ His mother was waiting. "Did you have a good adventure?" she asked.
 The End.`,
       difficulty: 1,
       wordCount: 200,
+      sourceType: "builtin",
+      sections: null,
+      fileName: null,
+      uploadedBy: null,
     };
     this.stories.set(story1.id, story1);
 
@@ -165,6 +170,10 @@ From that day on, Spark visited Luna every week. They had many adventures togeth
 The End.`,
       difficulty: 1,
       wordCount: 150,
+      sourceType: "builtin",
+      sections: null,
+      fileName: null,
+      uploadedBy: null,
     };
     this.stories.set(story2.id, story2);
 
@@ -371,9 +380,17 @@ The End.`,
       id,
       difficulty: story.difficulty || 1,
       wordCount: story.wordCount || 0,
+      sourceType: story.sourceType || "builtin",
+      sections: story.sections || null,
+      fileName: story.fileName || null,
+      uploadedBy: story.uploadedBy || null,
     };
     this.stories.set(id, newStory);
     return newStory;
+  }
+
+  async deleteStory(id: string): Promise<void> {
+    this.stories.delete(id);
   }
 
   async getChatMessages(userId: string, storyId: string): Promise<ChatMessage[]> {

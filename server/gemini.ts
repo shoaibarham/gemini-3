@@ -2,7 +2,9 @@ import { GoogleGenAI } from "@google/genai";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
-// Enhanced agentic system prompt for Gemini 2.5 Flash
+const GEMINI_MODEL = "gemini-2.5-pro";
+
+// Enhanced agentic system prompt for Gemini
 const AGENTIC_READING_BUDDY_PROMPT = `You are an intelligent, proactive AI Reading Buddy designed to help children learn and enjoy reading. You operate in an "agentic" mode - meaning you should be:
 
 1. PROACTIVE: Don't just answer questions - suggest related concepts, ask follow-up questions, and guide the learning journey
@@ -108,7 +110,7 @@ AGENTIC RESPONSE GUIDELINES:
 Respond as an enthusiastic, intelligent AI Reading Buddy:`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: GEMINI_MODEL,
       contents: agenticPrompt,
       config: {
         systemInstruction: AGENTIC_READING_BUDDY_PROMPT,
@@ -150,7 +152,7 @@ Generate a brief (1 sentence) proactive suggestion or observation that:
 Keep it under 15 words and very child-friendly.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: GEMINI_MODEL,
       contents: prompt,
       config: {
         temperature: 0.8,
@@ -198,7 +200,7 @@ Return ONLY a valid JSON array in this exact format (no other text):
 Where correctAnswer is the index (0-3) of the correct option.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: GEMINI_MODEL,
       contents: prompt,
       config: {
         temperature: 0.5,
@@ -271,7 +273,7 @@ export async function evaluateQuizPerformance(
          Be supportive and never make them feel bad!`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: GEMINI_MODEL,
       contents: prompt,
       config: {
         systemInstruction: "You are a friendly, encouraging reading tutor for children ages 5-10. Be positive, clear, and supportive.",
@@ -312,7 +314,7 @@ export async function generateMathHelp(
          Be supportive and never make them feel bad!`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: GEMINI_MODEL,
       contents: prompt,
       config: {
         systemInstruction: "You are a friendly, encouraging math tutor for children ages 5-10. Be positive, clear, and supportive.",

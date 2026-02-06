@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Link } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -10,6 +10,7 @@ import {
   SkipForward,
   Volume2,
   ChevronLeft,
+  ChevronRight,
   BookOpen,
   Clock,
   Loader2,
@@ -22,7 +23,10 @@ import {
   CheckCircle2,
   XCircle,
   Trophy,
-  RefreshCcw
+  RefreshCcw,
+  Upload,
+  FileText,
+  Layers
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -43,48 +47,33 @@ import type { VibeStateType, Story, ChatMessage } from "@shared/schema";
 
 type ReadingMode = "auto" | "cursor";
 
+interface StorySection {
+  title: string;
+  content: string;
+  wordCount: number;
+}
+
 export default function Reading() {
   const { data: stories, isLoading } = useQuery<Story[]>({
     queryKey: ["/api/stories"],
   });
 
-  const currentStory = stories?.[0] || {
-    id: "story-1",
-    title: "The Brave Little Fox",
-    content: `Once upon a time, in a green forest, there lived a little fox named Finn. 
-    
-Finn had bright orange fur and curious brown eyes. He loved to explore the forest every day.
+  const [selectedStoryId, setSelectedStoryId] = useState<string | null>(null);
+  const [currentSectionIndex, setCurrentSectionIndex] = useState(0);
 
-One morning, Finn woke up early. The sun was shining through the trees. Birds were singing their happy songs.
+  const currentStory = stories?.find(s => s.id === selectedStoryId) || null;
 
-"Today will be a great adventure!" said Finn.
+  const sections: StorySection[] = currentStory?.sections 
+    ? JSON.parse(currentStory.sections) 
+    : currentStory 
+      ? [{ title: currentStory.title, content: currentStory.content, wordCount: currentStory.wordCount || 0 }]
+      : [];
 
-He ran through the meadow, jumping over flowers. The butterflies danced around him.
+  const hasSections = sections.length > 1;
+  const currentSection = sections[currentSectionIndex] || null;
+  const sectionContent = currentSection?.content || "";
 
-Finn found a stream with cool, clear water. He stopped to take a drink. A friendly frog said hello.
-
-"Where are you going, little fox?" asked the frog.
-
-"I am looking for the rainbow pond," said Finn. "Do you know where it is?"
-
-The frog smiled. "Follow the path by the old oak tree. You will find it there."
-
-Finn thanked the frog and ran along the path. Soon, he saw a beautiful pond. The water sparkled like a rainbow!
-
-"I found it!" cheered Finn. He was so happy.
-
-Finn played by the rainbow pond all day. When the sun began to set, he went home.
-
-His mother was waiting. "Did you have a good adventure?" she asked.
-
-"The best adventure ever!" said Finn with a big smile.
-
-The End.`,
-    difficulty: 1,
-    wordCount: 200,
-  };
-
-  const storyId = currentStory.id;
+  const storyId = currentStory?.id || "";
   const userId = "user-1";
 
   const { data: chatMessages = [] } = useQuery<ChatMessage[]>({
@@ -104,8 +93,9 @@ The End.`,
   const [chatInput, setChatInput] = useState("");
   const [isDefining, setIsDefining] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
   
-  // Quiz state
   const [showQuiz, setShowQuiz] = useState(false);
   const [quizQuestions, setQuizQuestions] = useState<Array<{ id: string; question: string; options: string[] }>>([]);
   const [quizId, setQuizId] = useState<string | null>(null);
@@ -119,11 +109,23 @@ The End.`,
   } | null>(null);
   const [quizSubmitted, setQuizSubmitted] = useState(false);
 
+  const resetReadingState = useCallback(() => {
+    setCurrentWordIndex(0);
+    setHoveredWordIndex(null);
+    setIsPlaying(false);
+    setShowQuiz(false);
+    setQuizQuestions([]);
+    setQuizId(null);
+    setSelectedAnswers({});
+    setQuizResult(null);
+    setQuizSubmitted(false);
+  }, []);
+
   const saveReadingProgress = useMutation({
     mutationFn: async (data: { wordsRead: number; currentPosition: number; completed: boolean }) => {
       const response = await apiRequest("POST", "/api/reading-progress", {
         userId: "user-1",
-        storyId: currentStory.id,
+        storyId: currentStory?.id,
         accuracy: 95,
         ...data,
       });
@@ -171,7 +173,11 @@ The End.`,
 
   const generateQuiz = useMutation({
     mutationFn: async () => {
-      const response = await apiRequest("POST", `/api/quiz/generate/${storyId}`, { userId });
+      const response = await apiRequest("POST", `/api/quiz/generate/${storyId}`, { 
+        userId,
+        sectionIndex: hasSections ? currentSectionIndex : undefined,
+        sectionContent: hasSections ? sectionContent : undefined,
+      });
       return response.json();
     },
     onSuccess: (data) => {
@@ -181,12 +187,7 @@ The End.`,
         setSelectedAnswers({});
         setQuizResult(null);
         setQuizSubmitted(false);
-      } else {
-        console.error("Invalid quiz data received:", data);
       }
-    },
-    onError: (error) => {
-      console.error("Quiz generation failed:", error);
     },
   });
 
@@ -203,14 +204,42 @@ The End.`,
     },
   });
 
-  const words = currentStory.content.split(/(\s+)/).filter(w => w.trim());
+  const handleUploadPdf = async (file: File) => {
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("pdf", file);
+      formData.append("userId", userId);
+
+      const response = await fetch("/api/upload-pdf", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Upload failed");
+      }
+
+      const data = await response.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/stories"] });
+      setSelectedStoryId(data.story.id);
+      setCurrentSectionIndex(0);
+      resetReadingState();
+    } catch (error: any) {
+      console.error("PDF upload error:", error);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const words = sectionContent.split(/(\s+)/).filter(w => w.trim());
   const totalWords = words.length;
   const effectiveWordIndex = readingMode === "cursor" && hoveredWordIndex !== null 
     ? hoveredWordIndex 
     : currentWordIndex;
-  const progress = (effectiveWordIndex / totalWords) * 100;
+  const progress = totalWords > 0 ? (effectiveWordIndex / totalWords) * 100 : 0;
 
-  // Auto-play mode effect
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (readingMode === "auto" && isPlaying && currentWordIndex < totalWords) {
@@ -231,7 +260,6 @@ The End.`,
     return () => clearInterval(interval);
   }, [readingMode, isPlaying, currentWordIndex, totalWords, playbackSpeed]);
 
-  // Timer effect
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (isPlaying || (readingMode === "cursor" && hoveredWordIndex !== null)) {
@@ -242,7 +270,6 @@ The End.`,
     return () => clearInterval(interval);
   }, [isPlaying, readingMode, hoveredWordIndex]);
 
-  // Vibe tracking
   useEffect(() => {
     if (progress > 75) {
       setCurrentVibe("happy");
@@ -251,14 +278,12 @@ The End.`,
     }
   }, [progress, isPlaying, readingMode, hoveredWordIndex]);
 
-  // Chat scroll
   useEffect(() => {
     if (chatScrollRef.current) {
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
     }
   }, [chatMessages]);
 
-  // Save progress periodically in cursor mode
   useEffect(() => {
     if (readingMode === "cursor" && hoveredWordIndex !== null && hoveredWordIndex % 10 === 0) {
       saveReadingProgress.mutate({
@@ -281,19 +306,13 @@ The End.`,
     }
     const newIsPlaying = !isPlaying;
     setIsPlaying(newIsPlaying);
-    
     if (newIsPlaying) {
       saveVibeState.mutate("focused");
     }
   };
 
-  const skipBack = () => {
-    setCurrentWordIndex(Math.max(0, currentWordIndex - 10));
-  };
-
-  const skipForward = () => {
-    setCurrentWordIndex(Math.min(totalWords, currentWordIndex + 10));
-  };
+  const skipBack = () => setCurrentWordIndex(Math.max(0, currentWordIndex - 10));
+  const skipForward = () => setCurrentWordIndex(Math.min(totalWords, currentWordIndex + 10));
 
   const handleSendMessage = () => {
     if (chatInput.trim() && !sendChatMessage.isPending) {
@@ -331,9 +350,29 @@ The End.`,
     generateQuiz.mutate();
   };
 
+  const handleNextSection = () => {
+    if (currentSectionIndex < sections.length - 1) {
+      setCurrentSectionIndex(currentSectionIndex + 1);
+      resetReadingState();
+    }
+  };
+
+  const handlePrevSection = () => {
+    if (currentSectionIndex > 0) {
+      setCurrentSectionIndex(currentSectionIndex - 1);
+      resetReadingState();
+    }
+  };
+
+  const handleSelectStory = (storyId: string) => {
+    setSelectedStoryId(storyId);
+    setCurrentSectionIndex(0);
+    resetReadingState();
+  };
+
   const isStoryComplete = progress >= 90;
 
-  const handleWordClick = (word: string, index: number) => {
+  const handleWordClick = (word: string) => {
     const cleanWord = word.replace(/[^a-zA-Z'-]/g, "");
     if (cleanWord.length > 2) {
       setSelectedWord(cleanWord);
@@ -346,7 +385,6 @@ The End.`,
   const handleWordHover = (index: number) => {
     if (readingMode === "cursor") {
       setHoveredWordIndex(index);
-      // Update the current word index to track cursor position
       setCurrentWordIndex(index);
     }
   };
@@ -371,12 +409,12 @@ The End.`,
                 : isPastWord 
                   ? "text-muted-foreground" 
                   : "text-foreground"
-            } ${isClickable ? "hover:bg-primary/10 hover:rounded" : ""}`}
+            } ${isClickable ? "hover:underline" : ""}`}
             animate={{
               scale: isCurrentWord ? 1.05 : 1,
             }}
             onMouseEnter={() => handleWordHover(index)}
-            onClick={() => handleWordClick(word, index)}
+            onClick={() => handleWordClick(word)}
             data-testid={`word-${index}`}
           >
             {word}{" "}
@@ -402,16 +440,149 @@ The End.`,
     );
   }
 
+  if (!selectedStoryId || !currentStory) {
+    return (
+      <div className="min-h-screen bg-background">
+        <header className="sticky top-0 z-40 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+          <div className="container mx-auto flex h-16 items-center justify-between gap-4 px-6">
+            <div className="flex items-center gap-4">
+              <Link href="/child">
+                <Button variant="ghost" size="icon" data-testid="button-back">
+                  <ChevronLeft className="h-5 w-5" />
+                </Button>
+              </Link>
+              <div className="flex items-center gap-2">
+                <BookOpen className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                <span className="font-child text-lg font-bold text-emerald-600 dark:text-emerald-400" data-testid="text-reading-title">Reading Library</span>
+              </div>
+            </div>
+            <ThemeToggle />
+          </div>
+        </header>
+
+        <main className="container mx-auto px-6 py-8 max-w-4xl">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-8"
+          >
+            <div className="text-center space-y-2">
+              <h1 className="font-child text-3xl font-bold" data-testid="text-library-heading">Choose What to Read</h1>
+              <p className="text-muted-foreground">Pick a story or upload your own PDF!</p>
+            </div>
+
+            <Card className="border-2 border-dashed border-primary/30">
+              <CardContent className="p-8 text-center">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleUploadPdf(file);
+                  }}
+                  data-testid="input-pdf-upload"
+                />
+                <Upload className="h-12 w-12 mx-auto mb-4 text-primary/60" />
+                <h3 className="font-child text-xl font-bold mb-2">Upload a PDF</h3>
+                <p className="text-muted-foreground mb-4 text-sm">
+                  Upload any PDF file and read it section by section with AI-powered quizzes!
+                </p>
+                <Button
+                  size="lg"
+                  className="gap-2"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  data-testid="button-upload-pdf"
+                >
+                  {uploading ? (
+                    <>
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      Processing PDF...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="h-5 w-5" />
+                      Upload PDF
+                    </>
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+
+            <div>
+              <h2 className="font-child text-xl font-bold mb-4 flex items-center gap-2">
+                <BookOpen className="h-5 w-5" />
+                Available Stories
+              </h2>
+              <div className="grid gap-4 md:grid-cols-2">
+                {stories?.map((story) => (
+                  <Card 
+                    key={story.id} 
+                    className="hover-elevate cursor-pointer transition-all duration-200"
+                    onClick={() => handleSelectStory(story.id)}
+                    data-testid={`card-story-${story.id}`}
+                  >
+                    <CardContent className="p-6">
+                      <div className="flex items-start gap-4">
+                        <div className={`flex h-12 w-12 items-center justify-center rounded-xl shrink-0 ${
+                          story.sourceType === "pdf" ? "bg-blue-500/10" : "bg-emerald-500/10"
+                        }`}>
+                          {story.sourceType === "pdf" ? (
+                            <FileText className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+                          ) : (
+                            <BookOpen className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-child font-bold truncate" data-testid={`text-story-title-${story.id}`}>
+                            {story.title}
+                          </h3>
+                          <div className="flex items-center gap-2 mt-1 flex-wrap">
+                            <span className="text-xs text-muted-foreground">
+                              {story.wordCount} words
+                            </span>
+                            {story.sourceType === "pdf" && story.sections && (
+                              <Badge variant="secondary" className="text-xs">
+                                <Layers className="h-3 w-3 mr-1" />
+                                {JSON.parse(story.sections).length} sections
+                              </Badge>
+                            )}
+                            {story.sourceType === "pdf" && (
+                              <Badge variant="outline" className="text-xs">PDF</Badge>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-2 line-clamp-2">
+                            {story.content.substring(0, 120)}...
+                          </p>
+                        </div>
+                        <ChevronRight className="h-5 w-5 text-muted-foreground shrink-0" />
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          </motion.div>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-40 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="container mx-auto flex h-16 items-center justify-between gap-4 px-6">
           <div className="flex items-center gap-4">
-            <Link href="/child">
-              <Button variant="ghost" size="icon" data-testid="button-back">
-                <ChevronLeft className="h-5 w-5" />
-              </Button>
-            </Link>
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              onClick={() => setSelectedStoryId(null)}
+              data-testid="button-back"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </Button>
             <div className="flex items-center gap-2">
               <BookOpen className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
               <span className="font-child text-lg font-bold text-emerald-600 dark:text-emerald-400" data-testid="text-reading-title">Reading</span>
@@ -436,6 +607,32 @@ The End.`,
           >
             <div className="text-center space-y-2">
               <h1 className="font-child text-3xl font-bold" data-testid="text-story-title">{currentStory.title}</h1>
+              {hasSections && (
+                <div className="flex items-center justify-center gap-4">
+                  <Button 
+                    variant="ghost" 
+                    size="icon"
+                    disabled={currentSectionIndex === 0}
+                    onClick={handlePrevSection}
+                    data-testid="button-prev-section"
+                  >
+                    <ChevronLeft className="h-5 w-5" />
+                  </Button>
+                  <Badge variant="secondary" className="font-child" data-testid="badge-section-indicator">
+                    <Layers className="h-3 w-3 mr-1" />
+                    Section {currentSectionIndex + 1} of {sections.length}
+                  </Badge>
+                  <Button 
+                    variant="ghost" 
+                    size="icon"
+                    disabled={currentSectionIndex >= sections.length - 1}
+                    onClick={handleNextSection}
+                    data-testid="button-next-section"
+                  >
+                    <ChevronRight className="h-5 w-5" />
+                  </Button>
+                </div>
+              )}
               <p className="text-muted-foreground">
                 {readingMode === "cursor" 
                   ? "Move your cursor over words to read along" 
@@ -446,7 +643,7 @@ The End.`,
             <Card className="overflow-hidden">
               <CardContent className="p-8">
                 <div className="mb-6">
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-muted-foreground">Progress</span>
                       <Badge 
@@ -484,7 +681,6 @@ The End.`,
             <Card>
               <CardContent className="p-6">
                 <div className="flex flex-col items-center gap-6">
-                  {/* Mode Toggle */}
                   <div className="flex items-center gap-2">
                     <Button
                       variant={readingMode === "cursor" ? "default" : "outline"}
@@ -511,7 +707,6 @@ The End.`,
                     </Button>
                   </div>
 
-                  {/* Auto-play controls - only show in auto mode */}
                   {readingMode === "auto" && (
                     <>
                       <div className="flex items-center gap-4">
@@ -580,7 +775,38 @@ The End.`,
               </CardContent>
             </Card>
 
-            {/* Quiz Section */}
+            {hasSections && (
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <Button
+                      variant="outline"
+                      disabled={currentSectionIndex === 0}
+                      onClick={handlePrevSection}
+                      className="gap-2"
+                      data-testid="button-prev-section-bottom"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                      Previous Section
+                    </Button>
+                    <span className="text-sm text-muted-foreground font-child">
+                      {currentSectionIndex + 1} / {sections.length}
+                    </span>
+                    <Button
+                      variant="outline"
+                      disabled={currentSectionIndex >= sections.length - 1}
+                      onClick={handleNextSection}
+                      className="gap-2"
+                      data-testid="button-next-section-bottom"
+                    >
+                      Next Section
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {isStoryComplete && !showQuiz && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
@@ -589,9 +815,11 @@ The End.`,
                 <Card className="border-2 border-primary/30 bg-primary/5">
                   <CardContent className="p-6 text-center">
                     <Trophy className="h-12 w-12 mx-auto mb-4 text-amber-500" />
-                    <h3 className="font-child text-xl font-bold mb-2">Great job reading!</h3>
+                    <h3 className="font-child text-xl font-bold mb-2">
+                      {hasSections ? `Great job reading Section ${currentSectionIndex + 1}!` : "Great job reading!"}
+                    </h3>
                     <p className="text-muted-foreground mb-4">
-                      You've read most of the story. Ready to test what you learned?
+                      Ready to test what you learned?
                     </p>
                     <Button
                       size="lg"
@@ -617,6 +845,11 @@ The End.`,
                     <CardTitle className="font-child flex items-center gap-2">
                       <Sparkles className="h-5 w-5 text-primary" />
                       Reading Comprehension Quiz
+                      {hasSections && (
+                        <Badge variant="secondary" className="ml-2">
+                          Section {currentSectionIndex + 1}
+                        </Badge>
+                      )}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-6">
@@ -628,7 +861,7 @@ The End.`,
                     ) : generateQuiz.isError || (quizQuestions.length === 0 && !generateQuiz.isPending) ? (
                       <div className="flex flex-col items-center justify-center py-8">
                         <XCircle className="h-12 w-12 text-amber-500 mb-4" />
-                        <p className="font-child font-medium mb-2">Oops! Couldn't create the quiz right now.</p>
+                        <p className="font-child font-medium mb-2">Couldn't create the quiz right now.</p>
                         <p className="text-muted-foreground text-sm mb-4">Let's try again in a moment!</p>
                         <Button onClick={() => generateQuiz.mutate()} className="gap-2" data-testid="button-retry-generate">
                           <RefreshCcw className="h-4 w-4" />
@@ -654,7 +887,6 @@ The End.`,
                           </p>
                         </div>
 
-                        {/* Show correct/incorrect answers */}
                         <div className="space-y-4">
                           {quizQuestions.map((q, qIdx) => {
                             const userAnswer = selectedAnswers[qIdx];
@@ -663,9 +895,9 @@ The End.`,
                               <div key={q.id} className="p-4 rounded-lg bg-muted/50">
                                 <p className="font-child font-medium mb-2 flex items-center gap-2">
                                   {isCorrect ? (
-                                    <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                                    <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
                                   ) : (
-                                    <XCircle className="h-4 w-4 text-red-500" />
+                                    <XCircle className="h-4 w-4 text-red-500 shrink-0" />
                                   )}
                                   {q.question}
                                 </p>
@@ -688,7 +920,7 @@ The End.`,
                           })}
                         </div>
 
-                        <div className="flex justify-center gap-4">
+                        <div className="flex justify-center gap-4 flex-wrap">
                           {!quizResult.passed && (
                             <Button
                               variant="outline"
@@ -698,6 +930,17 @@ The End.`,
                             >
                               <RefreshCcw className="h-4 w-4" />
                               Try Again
+                            </Button>
+                          )}
+                          {hasSections && currentSectionIndex < sections.length - 1 && quizResult.passed && (
+                            <Button
+                              variant="outline"
+                              onClick={handleNextSection}
+                              className="gap-2"
+                              data-testid="button-quiz-next-section"
+                            >
+                              Next Section
+                              <ChevronRight className="h-4 w-4" />
                             </Button>
                           )}
                           <Button
@@ -762,13 +1005,16 @@ The End.`,
               </motion.div>
             )}
 
-            <div className="flex justify-center gap-4 pb-20">
-              <Link href="/child">
-                <Button variant="outline" className="gap-2" data-testid="button-back-dashboard">
-                  <ChevronLeft className="h-4 w-4" />
-                  Back to Dashboard
-                </Button>
-              </Link>
+            <div className="flex justify-center gap-4 pb-20 flex-wrap">
+              <Button 
+                variant="outline" 
+                className="gap-2" 
+                onClick={() => setSelectedStoryId(null)}
+                data-testid="button-back-library"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Back to Library
+              </Button>
               <Button
                 variant={isChatOpen ? "secondary" : "default"}
                 className="gap-2"
@@ -826,7 +1072,7 @@ The End.`,
                           <div className="mt-4 space-y-2">
                             <p className="text-xs font-medium">Try asking:</p>
                             <div className="flex flex-wrap gap-2 justify-center">
-                              {["Who is Finn?", "What happens next?", "Explain 'adventure'"].map((q) => (
+                              {["What is this about?", "What happens next?", "Help me understand"].map((q) => (
                                 <Badge 
                                   key={q} 
                                   variant="outline" 

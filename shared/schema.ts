@@ -56,6 +56,10 @@ export const stories = pgTable("stories", {
   content: text("content").notNull(),
   difficulty: integer("difficulty").default(1),
   wordCount: integer("word_count").default(0),
+  sourceType: text("source_type").default("builtin"),
+  sections: text("sections"),
+  fileName: text("file_name"),
+  uploadedBy: varchar("uploaded_by", { length: 36 }),
 });
 
 export const chatMessages = pgTable("chat_messages", {
