@@ -10,12 +10,7 @@ vite.config.ts.*
 .env.local
 .env.production
 
-# Replit files (not needed for local development)
-.replit
-replit.md
-.cache/
-.local/
-generated-icon.png
+
 
 # Manim cache (large generated videos)
 public/manim-cache/
