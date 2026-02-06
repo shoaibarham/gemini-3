@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 
-
+//setup config
 export default defineConfig({
   plugins: [
     react(),
