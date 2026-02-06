@@ -24,7 +24,7 @@ The frontend follows a page-based structure with reusable components:
 - Child dashboard with gamified progress tracking
 - Parent dashboard with analytics and session monitoring
 - Reading module with cursor-based word tracking, word highlighting, and AI chatbot assistant
-- Math module with adaptive problem generation and AI-powered feedback
+- Math Visualizer module: equation input with number pad/operator buttons, Manim animated visualizations, and AI explanations
 
 ### Backend Architecture
 - **Runtime**: Node.js with Express 5

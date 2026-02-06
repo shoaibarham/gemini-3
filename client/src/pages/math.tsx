@@ -1,131 +1,102 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useRef, useCallback } from "react";
 import { Link } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { useMutation } from "@tanstack/react-query";
 import { 
   ChevronLeft,
   Calculator,
-  Star,
-  Flame,
-  Check,
-  X,
-  RotateCcw,
-  Lightbulb,
-  Clock,
+  Play,
   Sparkles,
   Loader2,
-  Play,
-  Eye,
-  SkipForward,
+  RotateCcw,
+  Delete,
+  Plus,
+  Minus,
+  X,
+  Divide,
+  Equal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { VibeMonitor } from "@/components/vibe-monitor";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { Celebration } from "@/components/celebration";
 import { apiRequest } from "@/lib/queryClient";
-import type { VibeStateType, MathProblem } from "@shared/schema";
 
-const generateProblem = (level: number): MathProblem => {
-  const types: MathProblem["type"][] = ["addition", "subtraction", "multiplication", "division"];
-  const type = types[Math.floor(Math.random() * Math.min(level + 1, types.length))];
-  
-  let operand1: number, operand2: number, answer: number;
-  
+type OperationType = "addition" | "subtraction" | "multiplication" | "division";
+
+interface ParsedEquation {
+  operand1: number;
+  operator: string;
+  operand2: number;
+  type: OperationType;
+  answer: number;
+}
+
+const operatorMap: Record<string, OperationType> = {
+  "+": "addition",
+  "-": "subtraction",
+  "×": "multiplication",
+  "÷": "division",
+};
+
+function parseEquation(input: string): ParsedEquation | null {
+  const cleaned = input.replace(/\s+/g, "");
+  const match = cleaned.match(/^(\d+)([+\-×÷xX*/])(\d+)$/);
+  if (!match) return null;
+
+  const operand1 = parseInt(match[1], 10);
+  let opChar = match[2];
+  const operand2 = parseInt(match[3], 10);
+
+  if (opChar === "*" || opChar === "x" || opChar === "X") opChar = "×";
+  if (opChar === "/") opChar = "÷";
+
+  const type = operatorMap[opChar];
+  if (!type) return null;
+
+  if (operand1 > 1000 || operand2 > 1000 || operand1 < 0 || operand2 < 0) return null;
+  if (opChar === "÷" && operand2 === 0) return null;
+
+  let answer: number;
   switch (type) {
     case "addition":
-      operand1 = Math.floor(Math.random() * (10 * level)) + 1;
-      operand2 = Math.floor(Math.random() * (10 * level)) + 1;
       answer = operand1 + operand2;
       break;
     case "subtraction":
-      operand1 = Math.floor(Math.random() * (10 * level)) + 10;
-      operand2 = Math.floor(Math.random() * Math.min(operand1, 10 * level)) + 1;
       answer = operand1 - operand2;
       break;
     case "multiplication":
-      operand1 = Math.floor(Math.random() * (5 * level)) + 1;
-      operand2 = Math.floor(Math.random() * 10) + 1;
       answer = operand1 * operand2;
       break;
     case "division":
-      operand2 = Math.floor(Math.random() * 9) + 2;
-      answer = Math.floor(Math.random() * 10) + 1;
-      operand1 = operand2 * answer;
+      answer = operand1 / operand2;
       break;
-    default:
-      operand1 = 1;
-      operand2 = 1;
-      answer = 2;
   }
-  
-  return {
-    id: Math.random().toString(36).substr(2, 9),
-    type,
-    operand1,
-    operand2,
-    answer,
-  };
-};
 
-const operatorSymbols: Record<MathProblem["type"], string> = {
-  addition: "+",
-  subtraction: "-",
-  multiplication: "\u00d7",
-  division: "\u00f7",
-};
+  return { operand1, operator: opChar, operand2, type, answer };
+}
+
+const exampleEquations = [
+  { label: "3 + 5", icon: Plus },
+  { label: "12 - 4", icon: Minus },
+  { label: "6 × 3", icon: X },
+  { label: "20 ÷ 5", icon: Divide },
+  { label: "7 + 8", icon: Plus },
+  { label: "15 - 9", icon: Minus },
+  { label: "4 × 7", icon: X },
+  { label: "36 ÷ 6", icon: Divide },
+];
 
 export default function MathPage() {
-  const [currentProblem, setCurrentProblem] = useState<MathProblem>(generateProblem(1));
-  const [userInput, setUserInput] = useState("");
-  const [problemsCompleted, setProblemsCompleted] = useState(0);
-  const [correctAnswers, setCorrectAnswers] = useState(0);
-  const [streak, setStreak] = useState(0);
-  const [bestStreak, setBestStreak] = useState(0);
-  const [level, setLevel] = useState(1);
-  const [showResult, setShowResult] = useState<"correct" | "incorrect" | null>(null);
-  const [showCelebration, setShowCelebration] = useState(false);
-  const [showHint, setShowHint] = useState(false);
-  const [currentVibe, setCurrentVibe] = useState<VibeStateType>("focused");
-  const [elapsedTime, setElapsedTime] = useState(0);
-  const [aiFeedback, setAiFeedback] = useState<string | null>(null);
+  const [equation, setEquation] = useState("");
+  const [parsedResult, setParsedResult] = useState<ParsedEquation | null>(null);
   const [vizVideoUrl, setVizVideoUrl] = useState<string | null>(null);
   const [showVisualization, setShowVisualization] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [aiFeedback, setAiFeedback] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const advanceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const saveMathProgress = useMutation({
-    mutationFn: async (data: { problemsAttempted: number; problemsCorrect: number; currentLevel: number; streak: number }) => {
-      const response = await apiRequest("POST", "/api/math-progress", {
-        userId: "user-1",
-        ...data,
-      });
-      return response.json();
-    },
-  });
-
-  const saveVibeState = useMutation({
-    mutationFn: async (state: string) => {
-      const response = await apiRequest("POST", "/api/vibe-states", {
-        userId: "user-1",
-        state,
-      });
-      return response.json();
-    },
-  });
-
-  const getMathHelp = useMutation({
-    mutationFn: async (data: { problem: string; userAnswer: number; correctAnswer: number; isCorrect: boolean }) => {
-      const response = await apiRequest("POST", "/api/math-help", data);
-      return response.json();
-    },
-    onSuccess: (data) => {
-      setAiFeedback(data.feedback);
-    },
-  });
 
   const getVisualization = useMutation({
-    mutationFn: async (data: { type: string; operand1: number; operand2: number; answer: number; style?: string }) => {
+    mutationFn: async (data: { type: string; operand1: number; operand2: number; answer: number }) => {
       const response = await apiRequest("POST", "/api/math-visualization", data);
       return response.json();
     },
@@ -133,183 +104,96 @@ export default function MathPage() {
       if (data.videoUrl) {
         setVizVideoUrl(data.videoUrl);
         setShowVisualization(true);
-        if (advanceTimeoutRef.current) {
-          clearTimeout(advanceTimeoutRef.current);
-          advanceTimeoutRef.current = null;
-        }
       }
     },
   });
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setElapsedTime((prev) => prev + 1);
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
+  const getMathExplanation = useMutation({
+    mutationFn: async (data: { problem: string; correctAnswer: number }) => {
+      const response = await apiRequest("POST", "/api/math-help", {
+        problem: data.problem,
+        userAnswer: data.correctAnswer,
+        correctAnswer: data.correctAnswer,
+        isCorrect: true,
+      });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      setAiFeedback(data.feedback);
+    },
+  });
 
-  useEffect(() => {
-    if (streak >= 3) {
-      setCurrentVibe("happy");
-      saveVibeState.mutate("happy");
-    } else if (problemsCompleted > 0 && correctAnswers / problemsCompleted < 0.5) {
-      setCurrentVibe("confused");
-      saveVibeState.mutate("confused");
-    } else {
-      setCurrentVibe("focused");
+  const handleVisualize = useCallback(() => {
+    setParseError(null);
+    setVizVideoUrl(null);
+    setShowVisualization(false);
+    setAiFeedback(null);
+
+    const parsed = parseEquation(equation);
+    if (!parsed) {
+      setParseError("Type an equation like 3 + 5 or 12 × 4");
+      setParsedResult(null);
+      return;
     }
-  }, [streak, problemsCompleted, correctAnswers]);
 
-  useEffect(() => {
-    return () => {
-      if (advanceTimeoutRef.current) {
-        clearTimeout(advanceTimeoutRef.current);
-      }
-    };
-  }, []);
+    setParsedResult(parsed);
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
+    getVisualization.mutate({
+      type: parsed.type,
+      operand1: parsed.operand1,
+      operand2: parsed.operand2,
+      answer: parsed.answer,
+    });
+
+    const problemStr = `${parsed.operand1} ${parsed.operator} ${parsed.operand2}`;
+    getMathExplanation.mutate({
+      problem: problemStr,
+      correctAnswer: parsed.answer,
+    });
+  }, [equation]);
+
+  const handleExampleClick = (label: string) => {
+    setEquation(label);
+    setParseError(null);
+    setVizVideoUrl(null);
+    setShowVisualization(false);
+    setAiFeedback(null);
+    setParsedResult(null);
   };
 
   const handleNumberClick = (num: string) => {
-    if (showResult) return;
-    if (userInput.length < 4) {
-      setUserInput(userInput + num);
-    }
+    setEquation((prev) => prev + num);
+    setParseError(null);
+  };
+
+  const handleOperatorClick = (op: string) => {
+    setEquation((prev) => prev + " " + op + " ");
+    setParseError(null);
   };
 
   const handleClear = () => {
-    setUserInput("");
-    setShowHint(false);
+    setEquation("");
+    setParseError(null);
+    setParsedResult(null);
+    setVizVideoUrl(null);
+    setShowVisualization(false);
+    setAiFeedback(null);
   };
 
   const handleBackspace = () => {
-    setUserInput(userInput.slice(0, -1));
+    setEquation((prev) => prev.trimEnd().slice(0, -1).trimEnd());
+    setParseError(null);
   };
 
-  const advanceToNextProblem = useCallback(() => {
-    if (advanceTimeoutRef.current) {
-      clearTimeout(advanceTimeoutRef.current);
-      advanceTimeoutRef.current = null;
-    }
-    setShowResult(null);
-    setUserInput("");
-    setShowHint(false);
-    setAiFeedback(null);
-    setVizVideoUrl(null);
-    setShowVisualization(false);
-    setCurrentProblem(generateProblem(level));
-  }, [level]);
-
-  const handleSubmit = () => {
-    if (!userInput || showResult) return;
-    
-    const userAnswer = parseInt(userInput, 10);
-    const isCorrect = userAnswer === currentProblem.answer;
-    
-    setShowResult(isCorrect ? "correct" : "incorrect");
-    setAiFeedback(null);
-    setVizVideoUrl(null);
-    setShowVisualization(false);
-    const newProblemsCompleted = problemsCompleted + 1;
-    setProblemsCompleted(newProblemsCompleted);
-    
-    let newCorrectAnswers = correctAnswers;
-    let newStreak = streak;
-    let newLevel = level;
-
-    const problemStr = `${currentProblem.operand1} ${operatorSymbols[currentProblem.type]} ${currentProblem.operand2}`;
-    getMathHelp.mutate({
-      problem: problemStr,
-      userAnswer,
-      correctAnswer: currentProblem.answer,
-      isCorrect,
-    });
-
-    if (isCorrect) {
-      newCorrectAnswers = correctAnswers + 1;
-      setCorrectAnswers(newCorrectAnswers);
-      newStreak = streak + 1;
-      setStreak(newStreak);
-      
-      if (newStreak > bestStreak) {
-        setBestStreak(newStreak);
-      }
-      
-      if (newCorrectAnswers % 5 === 0) {
-        newLevel = Math.min(level + 1, 4);
-        setLevel(newLevel);
-      }
-      
-      if (newStreak >= 2) {
-        setShowCelebration(true);
-      }
-    } else {
-      setStreak(0);
-      newStreak = 0;
-
-      getVisualization.mutate({
-        type: currentProblem.type,
-        operand1: currentProblem.operand1,
-        operand2: currentProblem.operand2,
-        answer: currentProblem.answer,
-      });
-    }
-
-    saveMathProgress.mutate({
-      problemsAttempted: newProblemsCompleted,
-      problemsCorrect: newCorrectAnswers,
-      currentLevel: newLevel,
-      streak: newStreak,
-    });
-    
-    if (isCorrect) {
-      advanceTimeoutRef.current = setTimeout(() => {
-        advanceToNextProblem();
-      }, 3500);
-    }
-  };
-
-  const handleShowMeHow = () => {
-    if (getVisualization.isPending) return;
-    getVisualization.mutate({
-      type: currentProblem.type,
-      operand1: currentProblem.operand1,
-      operand2: currentProblem.operand2,
-      answer: currentProblem.answer,
-    });
-  };
-
-  const getHint = () => {
-    const { type, operand1, operand2 } = currentProblem;
-    switch (type) {
-      case "addition":
-        return `Count up from ${operand1}: ${operand1}, ${operand1 + 1}, ${operand1 + 2}...`;
-      case "subtraction":
-        return `Count down from ${operand1}: ${operand1}, ${operand1 - 1}, ${operand1 - 2}...`;
-      case "multiplication":
-        return `Think of ${operand2} groups of ${operand1}`;
-      case "division":
-        return `How many ${operand2}s fit into ${operand1}?`;
-      default:
-        return "Take your time!";
-    }
-  };
-
-  const vizDescriptions: Record<string, string> = {
-    addition: "Watch the dots come together!",
-    subtraction: "See how we take some away!",
-    multiplication: "Look at the groups!",
-    division: "Watch how we split them up!",
-  };
+  const operatorButtons = [
+    { symbol: "+", icon: Plus, color: "text-emerald-600 dark:text-emerald-400" },
+    { symbol: "-", icon: Minus, color: "text-blue-600 dark:text-blue-400" },
+    { symbol: "×", icon: X, color: "text-purple-600 dark:text-purple-400" },
+    { symbol: "÷", icon: Divide, color: "text-orange-600 dark:text-orange-400" },
+  ];
 
   return (
     <div className="min-h-screen bg-background">
-      <Celebration show={showCelebration} onComplete={() => setShowCelebration(false)} />
-      
       <header className="sticky top-0 z-40 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="container mx-auto flex h-16 items-center justify-between gap-4 px-6">
           <div className="flex items-center gap-4">
@@ -320,16 +204,10 @@ export default function MathPage() {
             </Link>
             <div className="flex items-center gap-2">
               <Calculator className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-              <span className="font-child text-lg font-bold text-blue-600 dark:text-blue-400" data-testid="text-math-title">Math</span>
+              <span className="font-child text-lg font-bold text-blue-600 dark:text-blue-400" data-testid="text-math-title">Math Visualizer</span>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Clock className="h-4 w-4" />
-              <span data-testid="text-elapsed-time">{formatTime(elapsedTime)}</span>
-            </div>
-            <ThemeToggle />
-          </div>
+          <ThemeToggle />
         </div>
       </header>
 
@@ -339,189 +217,180 @@ export default function MathPage() {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-6"
         >
-          <div className="grid grid-cols-3 gap-4">
-            <Card>
-              <CardContent className="p-4 text-center">
-                <div className="flex items-center justify-center gap-1 text-amber-500">
-                  <Star className="h-4 w-4" />
-                  <span className="font-child text-lg font-bold" data-testid="text-correct">{correctAnswers}</span>
-                </div>
-                <p className="text-xs text-muted-foreground">Correct</p>
-              </CardContent>
-            </Card>
-            
-            <Card>
-              <CardContent className="p-4 text-center">
-                <div className="flex items-center justify-center gap-1 text-orange-500">
-                  <Flame className="h-4 w-4" />
-                  <span className="font-child text-lg font-bold" data-testid="text-streak">{streak}</span>
-                </div>
-                <p className="text-xs text-muted-foreground">Streak</p>
-              </CardContent>
-            </Card>
-            
-            <Card>
-              <CardContent className="p-4 text-center">
-                <span className="font-child text-lg font-bold text-blue-500" data-testid="text-level">Lv.{level}</span>
-                <p className="text-xs text-muted-foreground">Level</p>
-              </CardContent>
-            </Card>
+          <div className="text-center space-y-2">
+            <h1 className="font-child text-2xl font-bold" data-testid="text-page-heading">
+              Type an equation and watch it come alive!
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Enter a math problem and see a step-by-step animated visualization
+            </p>
           </div>
 
           <Card>
-            <CardContent className="p-8">
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={currentProblem.id}
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.9 }}
-                  className="text-center space-y-6"
-                >
-                  <div className="flex items-center justify-center gap-4 flex-wrap">
-                    <motion.span 
-                      className="font-child text-5xl font-bold"
-                      initial={{ x: -20 }}
-                      animate={{ x: 0 }}
-                      data-testid="text-operand1"
-                    >
-                      {currentProblem.operand1}
-                    </motion.span>
-                    <span className="text-4xl text-primary font-bold" data-testid="text-operator">
-                      {operatorSymbols[currentProblem.type]}
+            <CardContent className="p-6 space-y-4">
+              <div
+                className={`relative flex items-center min-h-[72px] px-6 rounded-xl border-2 transition-colors ${
+                  parseError
+                    ? "border-red-500/50 bg-red-500/5"
+                    : parsedResult
+                      ? "border-emerald-500/50 bg-emerald-500/5"
+                      : "border-primary/30 bg-muted/30"
+                }`}
+                data-testid="equation-display"
+              >
+                {equation ? (
+                  <span className="font-child text-3xl sm:text-4xl font-bold tracking-wide flex-1 text-center" data-testid="text-equation">
+                    {equation}
+                  </span>
+                ) : (
+                  <span className="font-child text-3xl sm:text-4xl font-bold tracking-wide flex-1 text-center text-muted-foreground/40" data-testid="text-equation-placeholder">
+                    3 + 5
+                  </span>
+                )}
+                {parsedResult && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.5 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="flex items-center gap-2"
+                  >
+                    <span className="text-3xl sm:text-4xl text-muted-foreground">=</span>
+                    <span className="font-child text-3xl sm:text-4xl font-bold text-emerald-600 dark:text-emerald-400" data-testid="text-answer">
+                      {Number.isInteger(parsedResult.answer) ? parsedResult.answer : parsedResult.answer.toFixed(2)}
                     </span>
-                    <motion.span 
-                      className="font-child text-5xl font-bold"
-                      initial={{ x: 20 }}
-                      animate={{ x: 0 }}
-                      data-testid="text-operand2"
-                    >
-                      {currentProblem.operand2}
-                    </motion.span>
-                    <span className="text-4xl text-muted-foreground">=</span>
-                    <div 
-                      className={`min-w-[100px] h-16 flex items-center justify-center rounded-xl border-2 transition-colors ${
-                        showResult === "correct" 
-                          ? "border-emerald-500 bg-emerald-500/10" 
-                          : showResult === "incorrect"
-                            ? "border-red-500 bg-red-500/10"
-                            : "border-primary/50 bg-muted/50"
-                      }`}
-                      data-testid="input-answer"
-                    >
-                      <span className="font-child text-4xl font-bold" data-testid="text-user-input">
-                        {userInput || "?"}
-                      </span>
-                    </div>
-                  </div>
+                  </motion.div>
+                )}
+              </div>
 
-                  <AnimatePresence>
-                    {showResult && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0 }}
-                        className="space-y-3"
-                      >
-                        <div 
-                          className={`flex items-center justify-center gap-2 text-lg font-medium ${
-                            showResult === "correct" ? "text-emerald-500" : "text-red-500"
-                          }`}
-                          data-testid="text-result"
-                        >
-                          {showResult === "correct" ? (
-                            <>
-                              <Check className="h-5 w-5" />
-                              <span>Great job!</span>
-                            </>
-                          ) : (
-                            <>
-                              <X className="h-5 w-5" />
-                              <span>The answer is {currentProblem.answer}</span>
-                            </>
-                          )}
-                        </div>
-                        
-                        <motion.div
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          transition={{ delay: 0.3 }}
-                          className={`flex items-start gap-2 p-3 rounded-xl ${
-                            showResult === "correct" 
-                              ? "bg-emerald-500/10 border border-emerald-500/20" 
-                              : "bg-blue-500/10 border border-blue-500/20"
-                          }`}
-                          data-testid="ai-feedback"
-                        >
-                          <Sparkles className="h-4 w-4 mt-0.5 text-primary shrink-0" />
-                          <div className="text-sm font-child">
-                            {getMathHelp.isPending ? (
-                              <div className="flex items-center gap-2">
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                                <span>AI is thinking...</span>
-                              </div>
-                            ) : aiFeedback ? (
-                              <span data-testid="text-ai-feedback">{aiFeedback}</span>
-                            ) : (
-                              <span>{showResult === "correct" ? "Excellent work!" : "Keep trying, you'll get it!"}</span>
-                            )}
-                          </div>
-                        </motion.div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-
-                  {showHint && !showResult && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="flex items-center justify-center gap-2 text-amber-600 dark:text-amber-400 bg-amber-500/10 rounded-xl p-3"
-                    >
-                      <Lightbulb className="h-5 w-5" />
-                      <span className="text-sm font-medium" data-testid="text-hint">{getHint()}</span>
-                    </motion.div>
-                  )}
-                </motion.div>
+              <AnimatePresence>
+                {parseError && (
+                  <motion.p
+                    initial={{ opacity: 0, y: -5 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    className="text-sm text-red-500 text-center"
+                    data-testid="text-parse-error"
+                  >
+                    {parseError}
+                  </motion.p>
+                )}
               </AnimatePresence>
+
+              <div className="grid grid-cols-4 gap-2">
+                {operatorButtons.map((op) => (
+                  <Button
+                    key={op.symbol}
+                    variant="outline"
+                    className="h-12 gap-1"
+                    onClick={() => handleOperatorClick(op.symbol)}
+                    data-testid={`button-op-${op.symbol}`}
+                  >
+                    <op.icon className={`h-4 w-4 ${op.color}`} />
+                  </Button>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+                  <Button
+                    key={num}
+                    variant="secondary"
+                    className="h-14 font-child text-2xl font-bold"
+                    onClick={() => handleNumberClick(num.toString())}
+                    data-testid={`button-num-${num}`}
+                  >
+                    {num}
+                  </Button>
+                ))}
+                <Button
+                  variant="ghost"
+                  className="h-14"
+                  onClick={handleClear}
+                  data-testid="button-clear"
+                >
+                  <RotateCcw className="h-5 w-5" />
+                </Button>
+                <Button
+                  variant="secondary"
+                  className="h-14 font-child text-2xl font-bold"
+                  onClick={() => handleNumberClick("0")}
+                  data-testid="button-num-0"
+                >
+                  0
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="h-14"
+                  onClick={handleBackspace}
+                  data-testid="button-backspace"
+                >
+                  <Delete className="h-5 w-5" />
+                </Button>
+              </div>
+
+              <Button
+                className="w-full h-14 gap-3 text-lg font-child font-bold"
+                onClick={handleVisualize}
+                disabled={!equation.trim() || getVisualization.isPending}
+                data-testid="button-visualize"
+              >
+                {getVisualization.isPending ? (
+                  <>
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    Creating Animation...
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-5 w-5" />
+                    Visualize
+                  </>
+                )}
+              </Button>
             </CardContent>
           </Card>
+
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground text-center">Try these examples:</p>
+            <div className="flex flex-wrap justify-center gap-2">
+              {exampleEquations.map((ex) => (
+                <Button
+                  key={ex.label}
+                  variant="outline"
+                  size="sm"
+                  className="gap-1 font-child"
+                  onClick={() => handleExampleClick(ex.label)}
+                  data-testid={`button-example-${ex.label.replace(/\s/g, "")}`}
+                >
+                  <ex.icon className="h-3 w-3" />
+                  {ex.label}
+                </Button>
+              ))}
+            </div>
+          </div>
 
           <AnimatePresence>
             {(showVisualization || getVisualization.isPending) && (
               <motion.div
-                initial={{ opacity: 0, y: 20, height: 0 }}
-                animate={{ opacity: 1, y: 0, height: "auto" }}
-                exit={{ opacity: 0, y: -10, height: 0 }}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
                 transition={{ type: "spring", stiffness: 300, damping: 30 }}
               >
                 <Card className="border-2 border-purple-500/30 bg-gradient-to-b from-purple-500/5 to-transparent">
                   <CardContent className="p-5">
-                    <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center justify-center w-8 h-8 rounded-md bg-purple-500/15">
-                          <Play className="h-4 w-4 text-purple-600 dark:text-purple-400" />
-                        </div>
-                        <div>
-                          <h3 className="font-child text-sm font-bold text-purple-600 dark:text-purple-400" data-testid="text-viz-title">
-                            Visual Explanation
-                          </h3>
-                          <p className="text-xs text-muted-foreground" data-testid="text-viz-description">
-                            {vizDescriptions[currentProblem.type] || "Watch and learn!"}
-                          </p>
-                        </div>
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="flex items-center justify-center w-8 h-8 rounded-md bg-purple-500/15">
+                        <Play className="h-4 w-4 text-purple-600 dark:text-purple-400" />
                       </div>
-                      {showVisualization && showResult === "incorrect" && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="gap-1 text-xs"
-                          onClick={advanceToNextProblem}
-                          data-testid="button-next-problem"
-                        >
-                          <SkipForward className="h-3 w-3" />
-                          Next
-                        </Button>
-                      )}
+                      <div>
+                        <h3 className="font-child text-sm font-bold text-purple-600 dark:text-purple-400" data-testid="text-viz-title">
+                          Visual Explanation
+                        </h3>
+                        {parsedResult && (
+                          <p className="text-xs text-muted-foreground" data-testid="text-viz-description">
+                            {parsedResult.operand1} {parsedResult.operator} {parsedResult.operand2} = {Number.isInteger(parsedResult.answer) ? parsedResult.answer : parsedResult.answer.toFixed(2)}
+                          </p>
+                        )}
+                      </div>
                     </div>
                     
                     {getVisualization.isPending && !vizVideoUrl ? (
@@ -563,13 +432,6 @@ export default function MathPage() {
                           className="w-full rounded-lg"
                           style={{ aspectRatio: "16/9" }}
                           data-testid="viz-video"
-                          onEnded={() => {
-                            if (showResult === "incorrect") {
-                              advanceTimeoutRef.current = setTimeout(() => {
-                                advanceToNextProblem();
-                              }, 2000);
-                            }
-                          }}
                         />
                       </motion.div>
                     ) : getVisualization.isError ? (
@@ -577,30 +439,16 @@ export default function MathPage() {
                         <p className="text-sm text-muted-foreground">
                           Could not create the animation right now.
                         </p>
-                        <div className="flex items-center justify-center gap-2 mt-3">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="gap-2"
-                            onClick={handleShowMeHow}
-                            data-testid="button-viz-retry"
-                          >
-                            <RotateCcw className="h-3 w-3" />
-                            Retry
-                          </Button>
-                          {showResult === "incorrect" && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="gap-2"
-                              onClick={advanceToNextProblem}
-                              data-testid="button-next-after-error"
-                            >
-                              <SkipForward className="h-3 w-3" />
-                              Next Problem
-                            </Button>
-                          )}
-                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="mt-3 gap-2"
+                          onClick={handleVisualize}
+                          data-testid="button-viz-retry"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          Retry
+                        </Button>
                       </div>
                     ) : null}
                   </CardContent>
@@ -609,83 +457,40 @@ export default function MathPage() {
             )}
           </AnimatePresence>
 
-          <Card>
-            <CardContent className="p-6">
-              <div className="grid grid-cols-3 gap-3">
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
-                  <Button
-                    key={num}
-                    variant="secondary"
-                    className="h-14 font-child text-2xl font-bold"
-                    onClick={() => handleNumberClick(num.toString())}
-                    disabled={showResult !== null}
-                    data-testid={`button-num-${num}`}
-                  >
-                    {num}
-                  </Button>
-                ))}
-                <Button
-                  variant="ghost"
-                  className="h-14"
-                  onClick={handleClear}
-                  disabled={showResult !== null}
-                  data-testid="button-clear"
-                >
-                  <RotateCcw className="h-5 w-5" />
-                </Button>
-                <Button
-                  variant="secondary"
-                  className="h-14 font-child text-2xl font-bold"
-                  onClick={() => handleNumberClick("0")}
-                  disabled={showResult !== null}
-                  data-testid="button-num-0"
-                >
-                  0
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="h-14"
-                  onClick={handleBackspace}
-                  disabled={showResult !== null}
-                  data-testid="button-backspace"
-                >
-                  <ChevronLeft className="h-5 w-5" />
-                </Button>
-              </div>
-
-              <div className="flex gap-3 mt-4">
-                <Button
-                  variant="outline"
-                  className="flex-1 gap-2"
-                  onClick={() => setShowHint(true)}
-                  disabled={showHint || showResult !== null}
-                  data-testid="button-hint"
-                >
-                  <Lightbulb className="h-4 w-4" />
-                  Hint
-                </Button>
-                <Button
-                  variant="outline"
-                  className="flex-1 gap-2"
-                  onClick={handleShowMeHow}
-                  disabled={getVisualization.isPending || showVisualization || showResult !== null}
-                  data-testid="button-show-me-how"
-                >
-                  <Eye className="h-4 w-4" />
-                  Show Me
-                </Button>
-                <Button
-                  className="flex-1 gap-2"
-                  onClick={handleSubmit}
-                  disabled={!userInput || showResult !== null}
-                  data-testid="button-submit"
-                >
-                  <Check className="h-4 w-4" />
-                  Check
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+          <AnimatePresence>
+            {(aiFeedback || getMathExplanation.isPending) && parsedResult && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+              >
+                <Card>
+                  <CardContent className="p-5">
+                    <div className="flex items-start gap-3">
+                      <div className="flex items-center justify-center w-8 h-8 rounded-md bg-blue-500/15 shrink-0">
+                        <Sparkles className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                      </div>
+                      <div className="space-y-1">
+                        <h3 className="font-child text-sm font-bold text-blue-600 dark:text-blue-400">
+                          AI Explanation
+                        </h3>
+                        <div className="text-sm font-child">
+                          {getMathExplanation.isPending ? (
+                            <div className="flex items-center gap-2">
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              <span>AI is thinking...</span>
+                            </div>
+                          ) : aiFeedback ? (
+                            <p data-testid="text-ai-feedback">{aiFeedback}</p>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <div className="flex justify-center pb-20">
             <Link href="/child">
@@ -697,8 +502,6 @@ export default function MathPage() {
           </div>
         </motion.div>
       </main>
-
-      <VibeMonitor currentVibe={currentVibe} />
     </div>
   );
 }
